@@ -50,7 +50,7 @@ if not exist "quick_dev_setup.sh" (
         curl -L -o quick_dev_setup.sh "https://raw.githubusercontent.com/daslaller/your-repo/main/quick_dev_setup.sh"
     ) else (
         REM Try with PowerShell
-        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/quick_dev_setup.sh' -OutFile 'quick_dev_setup.sh'"
+        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/daslaller/setup_flutter_dev_env/linux_macos_full.sh' -OutFile 'quick_dev_setup.sh'"
     )
     
     if not exist "quick_dev_setup.sh" (
@@ -71,3 +71,4 @@ echo.
 echo 🎉 Setup complete! You can now use Git Bash for development.
 
 pause
+
