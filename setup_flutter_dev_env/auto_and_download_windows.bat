@@ -47,10 +47,10 @@ if not exist "quick_dev_setup.sh" (
     REM Try with curl (comes with Windows 10+)
     where curl >nul 2>nul
     if %ERRORLEVEL% EQU 0 (
-        curl -L -o quick_dev_setup.sh "https://raw.githubusercontent.com/your-username/your-repo/main/quick_dev_setup.sh"
+        curl -L -o quick_dev_setup.sh "https://raw.githubusercontent.com/daslaller/your-repo/main/quick_dev_setup.sh"
     ) else (
         REM Try with PowerShell
-        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/your-username/your-repo/main/quick_dev_setup.sh' -OutFile 'quick_dev_setup.sh'"
+        powershell -Command "Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/quick_dev_setup.sh' -OutFile 'quick_dev_setup.sh'"
     )
     
     if not exist "quick_dev_setup.sh" (
@@ -69,4 +69,5 @@ echo 🎯 Launching development setup...
 
 echo.
 echo 🎉 Setup complete! You can now use Git Bash for development.
+
 pause
