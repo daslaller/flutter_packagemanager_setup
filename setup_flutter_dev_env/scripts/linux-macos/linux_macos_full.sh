@@ -76,12 +76,14 @@ authenticate_github() {
     echo "🔐 Setting up GitHub authentication..."
     echo ""
     
-    # Open browser first
+    # Open browser first using cascade fallback
     echo "🌐 Opening GitHub authentication in your browser..."
     if open "https://github.com/login/device" &>/dev/null; then
         echo "✅ Browser opened successfully"
     elif command -v xdg-open &>/dev/null && xdg-open "https://github.com/login/device" &>/dev/null; then
-        echo "✅ Browser opened successfully"  
+        echo "✅ Browser opened successfully"
+    elif open_browser "https://github.com/login/device"; then
+        echo "✅ Browser opened successfully"
     else
         echo "❌ Could not open browser automatically."
         echo "📝 Please visit: https://github.com/login/device"
