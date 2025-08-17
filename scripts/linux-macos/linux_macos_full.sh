@@ -35,6 +35,7 @@ get_relative_path() {
 # Function to install missing dependencies
 install_dependencies() {
     local missing_deps=()
+    local failed_installs=()
     
     # Check for GitHub CLI
     if ! command -v gh &> /dev/null; then
@@ -47,24 +48,52 @@ install_dependencies() {
     fi
     
     if [ ${#missing_deps[@]} -gt 0 ]; then
-        echo "❌ Missing required dependencies: ${missing_deps[*]}"
-        echo ""
-        echo "Please install them using your package manager:"
+        echo "📦 Missing required dependencies: ${missing_deps[*]}"
+        echo "🔧 Attempting automatic installation..."
         echo ""
         
         for dep in "${missing_deps[@]}"; do
-            echo "For $dep:"
-            if [[ "$dep" == "gh" ]]; then
-                echo "  # GitHub CLI installation varies by distribution"
-                echo "  # See: https://cli.github.com for specific instructions"
-                echo "  # Or try these common methods:"
-                suggest_package_install "gh"
+            echo "Installing $dep..."
+            if auto_install_package "$dep"; then
+                echo "✅ $dep installation completed"
             else
-                suggest_package_install "$dep"
+                echo "❌ Failed to install $dep automatically"
+                failed_installs+=("$dep")
             fi
             echo ""
         done
-        exit 1
+        
+        # Check if installations were successful
+        missing_after_install=()
+        for dep in "${missing_deps[@]}"; do
+            if ! command -v "$dep" &> /dev/null; then
+                missing_after_install+=("$dep")
+            fi
+        done
+        
+        if [ ${#missing_after_install[@]} -gt 0 ]; then
+            echo "❌ Some dependencies are still missing: ${missing_after_install[*]}"
+            echo ""
+            echo "Please install them manually using your package manager:"
+            echo ""
+            
+            for dep in "${missing_after_install[@]}"; do
+                echo "For $dep:"
+                if [[ "$dep" == "gh" ]]; then
+                    echo "  # GitHub CLI installation varies by distribution"
+                    echo "  # See: https://cli.github.com for specific instructions"
+                    echo "  # Or try these common methods:"
+                    suggest_package_install "gh"
+                else
+                    suggest_package_install "$dep"
+                fi
+                echo ""
+            done
+            exit 1
+        else
+            echo "✅ All dependencies installed successfully!"
+            echo ""
+        fi
     fi
 }
 

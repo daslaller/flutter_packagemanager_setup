@@ -176,3 +176,103 @@ suggest_package_install() {
             ;;
     esac
 }
+
+# Function to automatically install packages with detected package manager
+auto_install_package() {
+    local package="$1"
+    local distro=$(detect_linux_distro)
+    local install_cmd=""
+    local special_package="$package"
+    
+    # Handle special packages that have different names across distros
+    if [[ "$package" == "gh" ]]; then
+        case "$distro" in
+            "ubuntu"|"debian")
+                # GitHub CLI has special installation for Debian/Ubuntu
+                echo "📦 Installing GitHub CLI for $distro..."
+                if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+                   && sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+                   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+                   && sudo apt update \
+                   && sudo apt install gh -y; then
+                    echo "✅ GitHub CLI installed successfully"
+                    return 0
+                else
+                    echo "❌ Failed to install GitHub CLI automatically"
+                    return 1
+                fi
+                ;;
+            "fedora")
+                special_package="gh"
+                install_cmd="sudo dnf install $special_package -y"
+                ;;
+            "centos"|"rhel")
+                # GitHub CLI installation for RHEL/CentOS
+                echo "📦 Installing GitHub CLI for $distro..."
+                if sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo \
+                   && sudo dnf install gh -y; then
+                    echo "✅ GitHub CLI installed successfully"
+                    return 0
+                else
+                    echo "❌ Failed to install GitHub CLI automatically"
+                    return 1
+                fi
+                ;;
+            "arch"|"manjaro")
+                special_package="github-cli"
+                install_cmd="sudo pacman -S $special_package --noconfirm"
+                ;;
+            "alpine")
+                special_package="github-cli"
+                install_cmd="sudo apk add $special_package"
+                ;;
+        esac
+    fi
+    
+    # Set install command based on distro if not already set
+    if [[ -z "$install_cmd" ]]; then
+        case "$distro" in
+            "macos")
+                install_cmd="brew install $special_package"
+                ;;
+            "ubuntu"|"debian")
+                install_cmd="sudo apt update && sudo apt install $special_package -y"
+                ;;
+            "centos"|"rhel")
+                if command -v dnf &> /dev/null; then
+                    install_cmd="sudo dnf install $special_package -y"
+                else
+                    install_cmd="sudo yum install $special_package -y"
+                fi
+                ;;
+            "fedora")
+                install_cmd="sudo dnf install $special_package -y"
+                ;;
+            "arch"|"manjaro")
+                install_cmd="sudo pacman -S $special_package --noconfirm"
+                ;;
+            "alpine")
+                install_cmd="sudo apk add $special_package"
+                ;;
+            "gentoo")
+                install_cmd="sudo emerge $special_package"
+                ;;
+            "opensuse"|"suse")
+                install_cmd="sudo zypper install -y $special_package"
+                ;;
+            *)
+                echo "❌ Unknown distribution - cannot auto-install $package"
+                return 1
+                ;;
+        esac
+    fi
+    
+    echo "📦 Installing $package using: $install_cmd"
+    if eval "$install_cmd"; then
+        echo "✅ $package installed successfully"
+        return 0
+    else
+        echo "❌ Failed to install $package automatically"
+        return 1
+    fi
+}

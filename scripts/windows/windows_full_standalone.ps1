@@ -17,15 +17,49 @@ if (-not (Get-Command "gh" -ErrorAction SilentlyContinue)) {
     
     if (Get-Command "winget" -ErrorAction SilentlyContinue) {
         if ($isAdmin) {
-            winget install --id GitHub.cli --silent
+            Write-Host "🔧 Installing GitHub CLI with winget..." -ForegroundColor Green
+            try {
+                winget install --id GitHub.cli --silent --accept-source-agreements --accept-package-agreements
+                Write-Host "✅ GitHub CLI installed successfully" -ForegroundColor Green
+            } catch {
+                Write-Host "❌ Failed to install GitHub CLI with winget" -ForegroundColor Red
+                Write-Host "Please install manually: https://cli.github.com" -ForegroundColor Blue
+                Read-Host "Press Enter after installing GitHub CLI manually..."
+            }
         } else {
-            Write-Host ⚠️  Installing GitHub CLI requires administrator privileges." -ForegroundColor Yellow
-            Write-Host "Please run PowerShell as Administrator or install manually:" -ForegroundColor Yellow
-            Write-Host "https://cli.github.com" -ForegroundColor Blue
+            Write-Host "⚠️  Installing GitHub CLI requires administrator privileges." -ForegroundColor Yellow
+            Write-Host "Attempting installation without admin (may prompt for elevation)..." -ForegroundColor Yellow
+            try {
+                winget install --id GitHub.cli --silent --accept-source-agreements --accept-package-agreements
+                Write-Host "✅ GitHub CLI installed successfully" -ForegroundColor Green
+            } catch {
+                Write-Host "❌ Installation failed. Please run PowerShell as Administrator or install manually:" -ForegroundColor Red
+                Write-Host "https://cli.github.com" -ForegroundColor Blue
+                Read-Host "Press Enter after installing GitHub CLI manually..."
+            }
+        }
+    } elseif (Get-Command "choco" -ErrorAction SilentlyContinue) {
+        Write-Host "🔧 Installing GitHub CLI with Chocolatey..." -ForegroundColor Green
+        try {
+            choco install gh -y
+            Write-Host "✅ GitHub CLI installed successfully" -ForegroundColor Green
+        } catch {
+            Write-Host "❌ Failed to install GitHub CLI with Chocolatey" -ForegroundColor Red
+            Write-Host "Please install manually: https://cli.github.com" -ForegroundColor Blue
+            Read-Host "Press Enter after installing GitHub CLI manually..."
+        }
+    } elseif (Get-Command "scoop" -ErrorAction SilentlyContinue) {
+        Write-Host "🔧 Installing GitHub CLI with Scoop..." -ForegroundColor Green
+        try {
+            scoop install gh
+            Write-Host "✅ GitHub CLI installed successfully" -ForegroundColor Green
+        } catch {
+            Write-Host "❌ Failed to install GitHub CLI with Scoop" -ForegroundColor Red
+            Write-Host "Please install manually: https://cli.github.com" -ForegroundColor Blue
             Read-Host "Press Enter after installing GitHub CLI manually..."
         }
     } else {
-        Write-Host "❌ winget not found. Please install GitHub CLI manually:" -ForegroundColor Red
+        Write-Host "❌ No package manager found (winget, choco, scoop). Please install GitHub CLI manually:" -ForegroundColor Red
         Write-Host "https://cli.github.com" -ForegroundColor Blue
         Read-Host "Press Enter after installing GitHub CLI..."
     }
