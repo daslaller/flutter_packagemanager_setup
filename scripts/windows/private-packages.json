@@ -1,0 +1,10 @@
+﻿{
+    "packages":  [
+                     {
+                         "branch":  "main",
+                         "path":  "",
+                         "name":  "my_private_package",
+                         "git_url":  "https://github.com/your-org/my_private_package.git"
+                     }
+                 ]
+}
