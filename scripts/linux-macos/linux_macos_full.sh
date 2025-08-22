@@ -191,97 +191,16 @@ if ! gh auth status &>/dev/null; then
     authenticate_github
 fi
 
-# Function to get Flutter projects from GitHub
-get_github_flutter_projects() {
-    echo "🔍 Searching GitHub for Flutter projects..."
-    
-    # Get user's Flutter repositories from GitHub
-    local GITHUB_FLUTTER_JSON
-    GITHUB_FLUTTER_JSON=$(gh repo list --limit 100 --json name,owner,description,url --jq '.[] | select(.name | test("flutter|dart"; "i")) | select(.description // "" | test("flutter|dart"; "i"))')
-    
-    if [ -z "$GITHUB_FLUTTER_JSON" ]; then
-        # If no Flutter-specific repos found, try broader search
-        echo "🔍 No Flutter-specific repos found, searching all repositories..."
-        GITHUB_FLUTTER_JSON=$(gh repo list --limit 50 --json name,owner,description,url)
-    fi
-    
-    echo "$GITHUB_FLUTTER_JSON"
-}
+# Find current directory's pubspec.yaml or search for Flutter projects
+CURRENT_PUBSPEC="./pubspec.yaml"
+FLUTTER_PROJECTS=()
 
-# Function to clone and setup GitHub project
-clone_github_project() {
-    local REPO_FULL_NAME="$1"
-    local TARGET_DIR="$2"
-    
-    echo "📥 Cloning $REPO_FULL_NAME..."
-    
-    # Determine clone directory
-    local CLONE_DIR
-    if [ -n "$TARGET_DIR" ]; then
-        CLONE_DIR="$TARGET_DIR"
-    else
-        # Default to ~/Development or ~/Projects
-        if [ -d "$HOME/Development" ]; then
-            CLONE_DIR="$HOME/Development/$(echo "$REPO_FULL_NAME" | cut -d'/' -f2)"
-        elif [ -d "$HOME/Projects" ]; then
-            CLONE_DIR="$HOME/Projects/$(echo "$REPO_FULL_NAME" | cut -d'/' -f2)"
-        else
-            CLONE_DIR="$HOME/$(echo "$REPO_FULL_NAME" | cut -d'/' -f2)"
-        fi
-    fi
-    
-    # Check if directory already exists
-    if [ -d "$CLONE_DIR" ]; then
-        echo "⚠️  Directory $CLONE_DIR already exists"
-        read -p "Use existing directory? (Y/n): " USE_EXISTING
-        if [[ ! "$USE_EXISTING" =~ ^[Nn]$ ]]; then
-            if [ -f "$CLONE_DIR/pubspec.yaml" ]; then
-                echo "✅ Using existing project at $CLONE_DIR"
-                echo "$CLONE_DIR/pubspec.yaml"
-                return 0
-            else
-                echo "❌ Existing directory is not a Flutter project"
-                return 1
-            fi
-        else
-            echo "❌ Cancelled"
-            return 1
-        fi
-    fi
-    
-    # Clone the repository
-    if gh repo clone "$REPO_FULL_NAME" "$CLONE_DIR"; then
-        # Check if it's actually a Flutter project
-        if [ -f "$CLONE_DIR/pubspec.yaml" ]; then
-            echo "✅ Successfully cloned Flutter project to $CLONE_DIR"
-            echo "$CLONE_DIR/pubspec.yaml"
-            return 0
-        else
-            echo "❌ Cloned repository is not a Flutter project (no pubspec.yaml found)"
-            echo "🗑️  Removing cloned directory..."
-            rm -rf "$CLONE_DIR"
-            return 1
-        fi
-    else
-        echo "❌ Failed to clone repository"
-        return 1
-    fi
-}
-
-# Function to select project directory
-select_project_directory() {
-    local CURRENT_PUBSPEC="./pubspec.yaml"
-    local FLUTTER_PROJECTS=()
-    local PROJECT_OPTIONS=()
-    local GITHUB_PROJECTS=()
-    
-    echo "🔍 Discovering Flutter projects..."
-    
-    # Add current directory option if it has pubspec.yaml
-    if [ -f "$CURRENT_PUBSPEC" ]; then
-        FLUTTER_PROJECTS+=("$CURRENT_PUBSPEC")
-        PROJECT_OPTIONS+=("📁 Current Directory - $(basename "$(pwd)") ($(pwd))")
-    fi
+if [ -f "$CURRENT_PUBSPEC" ]; then
+    echo "📱 Found pubspec.yaml in current directory"
+    SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
+    SELECTED_PROJECT=$(basename "$(pwd)")
+else
+    echo "🔍 Searching for Flutter projects..."
     
     # Search in common directories
     SEARCH_DIRS=("$HOME/Development" "$HOME/Projects" "$HOME/dev" ".")
@@ -289,139 +208,35 @@ select_project_directory() {
     for dir in "${SEARCH_DIRS[@]}"; do
         if [ -d "$dir" ]; then
             while IFS= read -r -d '' project; do
-                # Skip if it's the current directory (already added above)
-                if [ "$(realpath "$(dirname "$project")")" != "$(realpath ".")" ]; then
-                    FLUTTER_PROJECTS+=("$project")
-                fi
+                FLUTTER_PROJECTS+=("$project")
             done < <(find "$dir" -maxdepth 3 -name "pubspec.yaml" -print0 2>/dev/null)
         fi
     done
     
-    # Add remaining local projects to options
-    for project in "${FLUTTER_PROJECTS[@]}"; do
-        if [ "$project" != "$CURRENT_PUBSPEC" ]; then
-            PROJECT_DIR=$(dirname "$project")
-            PROJECT_NAME=$(basename "$PROJECT_DIR")
-            RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
-            PROJECT_OPTIONS+=("💻 $PROJECT_NAME ($RELATIVE_PATH)")
-        fi
+    if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
+        echo "❌ No Flutter projects found. Run this from a Flutter project directory."
+        exit 1
+    fi
+    
+    echo ""
+    echo "Select a Flutter project:"
+    for i in "${!FLUTTER_PROJECTS[@]}"; do
+        PROJECT_DIR=$(dirname "${FLUTTER_PROJECTS[$i]}")
+        PROJECT_NAME=$(basename "$PROJECT_DIR")
+        RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
+        echo "$((i+1)). $PROJECT_NAME ($RELATIVE_PATH)"
     done
     
-    # Get GitHub Flutter projects
-    echo ""
-    GITHUB_FLUTTER_JSON=$(get_github_flutter_projects)
+    read -p "Enter project number: " PROJECT_NUM
     
-    if [ -n "$GITHUB_FLUTTER_JSON" ] && [ "$GITHUB_FLUTTER_JSON" != "[]" ]; then
-        # Parse GitHub projects and add to options
-        while IFS= read -r line; do
-            if [ -n "$line" ]; then
-                REPO_NAME=$(echo "$line" | jq -r '.name')
-                REPO_OWNER=$(echo "$line" | jq -r '.owner.login')
-                REPO_DESC=$(echo "$line" | jq -r '.description // "No description"')
-                GITHUB_PROJECTS+=("$REPO_OWNER/$REPO_NAME")
-                PROJECT_OPTIONS+=("🌐 $REPO_OWNER/$REPO_NAME - $REPO_DESC")
-            fi
-        done < <(echo "$GITHUB_FLUTTER_JSON" | jq -c '.')
-    fi
-    
-    # Add option to select a custom directory
-    PROJECT_OPTIONS+=("🗂️  Select custom directory...")
-    
-    if [ ${#PROJECT_OPTIONS[@]} -eq 0 ]; then
-        echo "❌ No Flutter projects found. Run this from a Flutter project directory or select a custom directory."
-        exit 1
-    fi
-    
-    echo ""
-    echo "📂 Select a project directory:"
-    echo ""
-    
-    # Use single-select for project selection
-    SELECTED_INDEX=-1
-    singleselect "Select a Flutter project (ENTER to select):" PROJECT_OPTIONS SELECTED_INDEX
-    
-    if [ "$SELECTED_INDEX" -eq -1 ]; then
-        echo "❌ No project selected"
-        exit 1
-    fi
-    
-    local CURRENT_COUNT=0
-    local LOCAL_COUNT=${#FLUTTER_PROJECTS[@]}
-    local GITHUB_COUNT=${#GITHUB_PROJECTS[@]}
-    
-    # Handle custom directory selection (last option)
-    if [ "$SELECTED_INDEX" -eq $((${#PROJECT_OPTIONS[@]} - 1)) ]; then
-        echo ""
-        echo "🗂️  Enter custom directory path:"
-        read -p "Path: " CUSTOM_PATH
-        
-        # Expand tilde and relative paths
-        CUSTOM_PATH=$(eval echo "$CUSTOM_PATH")
-        
-        if [ ! -d "$CUSTOM_PATH" ]; then
-            echo "❌ Directory does not exist: $CUSTOM_PATH"
-            exit 1
-        fi
-        
-        CUSTOM_PUBSPEC="$CUSTOM_PATH/pubspec.yaml"
-        if [ ! -f "$CUSTOM_PUBSPEC" ]; then
-            echo "❌ No pubspec.yaml found in: $CUSTOM_PATH"
-            exit 1
-        fi
-        
-        SELECTED_PUBSPEC="$CUSTOM_PUBSPEC"
-        SELECTED_PROJECT=$(basename "$CUSTOM_PATH")
-        return
-    fi
-    
-    # Check if selection is current directory
-    if [ -f "$CURRENT_PUBSPEC" ] && [ "$SELECTED_INDEX" -eq 0 ]; then
-        SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
-        SELECTED_PROJECT=$(basename "$(pwd)")
-        return
-    fi
-    
-    # Adjust index if current directory was included
-    local ADJUSTED_INDEX=$SELECTED_INDEX
-    if [ -f "$CURRENT_PUBSPEC" ]; then
-        ADJUSTED_INDEX=$((SELECTED_INDEX - 1))
-    fi
-    
-    # Check if selection is local project
-    if [ "$ADJUSTED_INDEX" -lt "$LOCAL_COUNT" ]; then
-        SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$ADJUSTED_INDEX]}"
-        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
-        return
-    fi
-    
-    # Selection must be GitHub project
-    local GITHUB_INDEX=$((ADJUSTED_INDEX - LOCAL_COUNT))
-    if [ "$GITHUB_INDEX" -lt "$GITHUB_COUNT" ]; then
-        local SELECTED_GITHUB_REPO="${GITHUB_PROJECTS[$GITHUB_INDEX]}"
-        echo ""
-        echo "📥 Selected GitHub project: $SELECTED_GITHUB_REPO"
-        
-        # Ask for clone location
-        echo ""
-        read -p "📁 Clone to directory (leave empty for default): " CLONE_DIR
-        
-        # Clone the project
-        CLONED_PUBSPEC=$(clone_github_project "$SELECTED_GITHUB_REPO" "$CLONE_DIR")
-        if [ $? -eq 0 ] && [ -f "$CLONED_PUBSPEC" ]; then
-            SELECTED_PUBSPEC="$CLONED_PUBSPEC"
-            SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
-        else
-            echo "❌ Failed to clone and setup GitHub project"
-            exit 1
-        fi
-    else
+    if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
         echo "❌ Invalid selection"
         exit 1
     fi
-}
-
-# Select project directory
-select_project_directory
+    
+    SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
+    SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+fi
 
 echo "📱 Using project: $SELECTED_PROJECT"
 
