@@ -45,11 +45,13 @@ flutter_packagemanager_setup/
 ## Core Functionality
 
 ### Package Management System
-- **Project Discovery**: Automatically finds Flutter projects in common directories (`~/Development`, `~/Projects`, `~/dev`, current directory)
+- **Enhanced Project Discovery**: 
+  - **Local Scan**: Automatically finds Flutter projects in common directories (`~/Development`, `~/Projects`, `~/dev`, current directory)
+  - **GitHub Fetch**: Clone Flutter projects directly from GitHub repositories with configurable save locations
 - **Repository Integration**: Uses GitHub CLI (`gh`) to list user repositories and add them as git dependencies
 - **pubspec.yaml Modification**: Automatically modifies pubspec.yaml files to add git dependencies with proper formatting
 - **Reference Selection**: Allows selection of specific branches or tags for dependencies
-- **Multiselection**: Allaws the user to select multiple different repositories from the command line to be used as packages, list repositories and let the user mark each repository wanted with spacebar and enter to confirm.
+- **Multiselection**: Allows the user to select multiple different repositories from the command line to be used as packages, list repositories and let the user mark each repository wanted with spacebar and enter to confirm.
 
 ### Setup Scripts Architecture
 - **Environment Setup**: Installs and configures Git, GitHub CLI
@@ -92,16 +94,19 @@ flutter_packagemanager_setup/
 ### Adding Multiple Packages to Flutter Project
 1. Run the appropriate script for your platform
 2. Authenticate with GitHub (automatic browser flow)
-3. Select target Flutter project from discovered projects  
-4. **Use multiselect interface** to choose multiple repositories:
+3. **Choose project source**:
+   - **Local Scan**: Select from existing Flutter projects on your machine
+   - **GitHub Fetch**: Clone a Flutter project from GitHub with custom save location
+4. Select target Flutter project from discovered/cloned projects  
+5. **Use multiselect interface** to choose multiple repositories:
    - Navigate with ↑/↓ arrow keys or j/k
    - Press SPACE to select/deselect repositories
    - Press ENTER to confirm selection
    - Press q to quit
-5. For each selected repository:
+6. For each selected repository:
    - Specify package name (defaults to repository name)
    - Select branch/tag reference (defaults to 'main')
-6. Script automatically updates pubspec.yaml and provides summary of changes
+7. Script automatically updates pubspec.yaml and provides summary of changes
 
 ### Setting Up Development Environment
 1. Run platform-specific setup script

@@ -13,6 +13,260 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
+# Function to select project source
+select_project_source() {
+    echo ""
+    echo "📱 Flutter Project Source Selection:"
+    echo "1. Scan local directories for existing Flutter projects"
+    echo "2. Fetch Flutter project from GitHub repository"
+    echo ""
+    
+    while true; do
+        read -p "Enter your choice (1-2): " SOURCE_CHOICE
+        
+        case "$SOURCE_CHOICE" in
+            1)
+                echo "🔍 Selected: Local directory scan"
+                return 1
+                ;;
+            2)
+                echo "📥 Selected: GitHub repository fetch"
+                return 2
+                ;;
+            *)
+                echo "❌ Invalid choice. Please enter 1 or 2."
+                ;;
+        esac
+    done
+}
+
+# Function to get save location for GitHub projects
+get_save_location() {
+    echo ""
+    echo "📁 Choose save location for GitHub project:"
+    
+    # Default options
+    DEFAULT_LOCATIONS=(
+        "$HOME/Development/github-projects"
+        "$HOME/Projects/github-projects"
+        "$HOME/dev/github-projects"
+        "./github-projects"
+    )
+    
+    echo "Suggested locations:"
+    for i in "${!DEFAULT_LOCATIONS[@]}"; do
+        echo "$((i+1)). ${DEFAULT_LOCATIONS[$i]}"
+    done
+    echo "$((${#DEFAULT_LOCATIONS[@]}+1)). Enter custom path"
+    echo ""
+    
+    while true; do
+        read -p "Enter your choice (1-$((${#DEFAULT_LOCATIONS[@]}+1))): " LOCATION_CHOICE
+        
+        if [[ "$LOCATION_CHOICE" =~ ^[0-9]+$ ]] && [ "$LOCATION_CHOICE" -ge 1 ] && [ "$LOCATION_CHOICE" -le ${#DEFAULT_LOCATIONS[@]} ]; then
+            SELECTED_LOCATION="${DEFAULT_LOCATIONS[$((LOCATION_CHOICE-1))]}"
+            break
+        elif [ "$LOCATION_CHOICE" -eq $((${#DEFAULT_LOCATIONS[@]}+1)) ]; then
+            read -p "Enter custom path: " CUSTOM_PATH
+            if [ -n "$CUSTOM_PATH" ]; then
+                SELECTED_LOCATION="$CUSTOM_PATH"
+                break
+            else
+                echo "❌ Path cannot be empty"
+            fi
+        else
+            echo "❌ Invalid choice. Please try again."
+        fi
+    done
+    
+    # Create directory if it doesn't exist
+    if [ ! -d "$SELECTED_LOCATION" ]; then
+        echo "📁 Creating directory: $SELECTED_LOCATION"
+        mkdir -p "$SELECTED_LOCATION" || {
+            echo "❌ Failed to create directory: $SELECTED_LOCATION"
+            return 1
+        }
+    fi
+    
+    echo "✅ Save location: $SELECTED_LOCATION"
+    echo "$SELECTED_LOCATION"
+}
+
+# Function to fetch GitHub project
+fetch_github_project() {
+    local SAVE_LOCATION="$1"
+    
+    echo ""
+    echo "🔍 GitHub Project Options:"
+    echo "1. Enter specific repository URL (e.g., github.com/user/flutter-project)"
+    echo "2. Browse and select from your GitHub repositories"
+    echo ""
+    
+    while true; do
+        read -p "Choose option (1-2): " GITHUB_OPTION
+        
+        case "$GITHUB_OPTION" in
+            1)
+                fetch_by_url "$SAVE_LOCATION"
+                return $?
+                ;;
+            2)
+                fetch_from_user_repos "$SAVE_LOCATION"
+                return $?
+                ;;
+            *)
+                echo "❌ Invalid choice. Please enter 1 or 2."
+                ;;
+        esac
+    done
+}
+
+# Function to fetch by URL
+fetch_by_url() {
+    local SAVE_LOCATION="$1"
+    
+    echo ""
+    read -p "Enter GitHub repository URL or user/repo format: " REPO_INPUT
+    
+    if [ -z "$REPO_INPUT" ]; then
+        echo "❌ Repository URL cannot be empty"
+        return 1
+    fi
+    
+    # Parse repository URL/format
+    REPO_URL=""
+    if [[ "$REPO_INPUT" =~ ^https://github.com/ ]]; then
+        REPO_URL="$REPO_INPUT"
+    elif [[ "$REPO_INPUT" =~ ^github.com/ ]]; then
+        REPO_URL="https://$REPO_INPUT"
+    elif [[ "$REPO_INPUT" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+        REPO_URL="https://github.com/$REPO_INPUT"
+    else
+        echo "❌ Invalid repository format. Use: user/repo or full GitHub URL"
+        return 1
+    fi
+    
+    clone_and_scan_project "$REPO_URL" "$SAVE_LOCATION"
+}
+
+# Function to fetch from user repositories
+fetch_from_user_repos() {
+    local SAVE_LOCATION="$1"
+    
+    echo ""
+    echo "🔍 Fetching your repositories..."
+    
+    # Get repository data and filter for potential Flutter projects
+    local REPO_JSON
+    REPO_JSON=$(gh repo list --limit 100 --json name,owner,url,description,language,topics)
+    
+    if [ -z "$REPO_JSON" ] || [ "$REPO_JSON" = "[]" ]; then
+        echo "❌ No repositories found"
+        return 1
+    fi
+    
+    # Filter for likely Flutter projects (language: Dart, topics containing flutter, or names containing flutter)
+    local FLUTTER_REPO_JSON
+    FLUTTER_REPO_JSON=$(echo "$REPO_JSON" | jq '[
+        .[] | select(
+            (.language == "Dart") or 
+            (.topics[]? | test("flutter"; "i")) or 
+            (.name | test("flutter"; "i")) or
+            (.description // "" | test("flutter"; "i"))
+        )
+    ]')
+    
+    # Create array of repository display strings
+    local FLUTTER_REPO_OPTIONS
+    mapfile -t FLUTTER_REPO_OPTIONS < <(echo "$FLUTTER_REPO_JSON" | jq -r '.[] | "\(.owner.login)/\(.name) - \(.description // "No description")"')
+    
+    # Create array of repository URLs for processing
+    local FLUTTER_REPO_URLS
+    mapfile -t FLUTTER_REPO_URLS < <(echo "$FLUTTER_REPO_JSON" | jq -r '.[] | .url')
+    
+    if [ ${#FLUTTER_REPO_OPTIONS[@]} -eq 0 ]; then
+        echo "❌ No Flutter projects found in your repositories"
+        echo "💡 Try option 1 to enter a specific repository URL"
+        return 1
+    fi
+    
+    echo ""
+    echo "📋 Found ${#FLUTTER_REPO_OPTIONS[@]} potential Flutter projects:"
+    echo ""
+    
+    # Use multiselect function for single selection (could be enhanced for multiple)
+    local SELECTED_INDICES=()
+    multiselect "Select Flutter project to clone:" FLUTTER_REPO_OPTIONS SELECTED_INDICES
+    
+    if [ ${#SELECTED_INDICES[@]} -eq 0 ]; then
+        echo "❌ No repository selected"
+        return 1
+    fi
+    
+    # Clone the selected repository
+    local SELECTED_INDEX="${SELECTED_INDICES[0]}"
+    local SELECTED_REPO_URL="${FLUTTER_REPO_URLS[$SELECTED_INDEX]}"
+    
+    clone_and_scan_project "$SELECTED_REPO_URL" "$SAVE_LOCATION"
+}
+
+# Function to clone and scan project
+clone_and_scan_project() {
+    local REPO_URL="$1"
+    local SAVE_LOCATION="$2"
+    
+    # Extract repository name from URL
+    local REPO_NAME
+    REPO_NAME=$(basename "$REPO_URL" .git)
+    local CLONE_PATH="$SAVE_LOCATION/$REPO_NAME"
+    
+    echo ""
+    echo "📥 Cloning repository..."
+    echo "Repository: $REPO_URL"
+    echo "Location: $CLONE_PATH"
+    
+    # Check if directory already exists
+    if [ -d "$CLONE_PATH" ]; then
+        echo "⚠️  Directory already exists: $CLONE_PATH"
+        read -p "Remove existing directory and re-clone? (y/N): " OVERWRITE
+        if [[ $OVERWRITE =~ ^[Yy]$ ]]; then
+            rm -rf "$CLONE_PATH"
+        else
+            echo "📁 Using existing directory"
+        fi
+    fi
+    
+    # Clone repository if directory doesn't exist
+    if [ ! -d "$CLONE_PATH" ]; then
+        if ! git clone "$REPO_URL" "$CLONE_PATH"; then
+            echo "❌ Failed to clone repository"
+            return 1
+        fi
+        echo "✅ Repository cloned successfully"
+    fi
+    
+    # Scan for Flutter projects in the cloned repository
+    echo ""
+    echo "🔍 Scanning for Flutter projects in cloned repository..."
+    
+    local CLONED_FLUTTER_PROJECTS=()
+    while IFS= read -r -d '' project; do
+        CLONED_FLUTTER_PROJECTS+=("$project")
+    done < <(find "$CLONE_PATH" -name "pubspec.yaml" -print0 2>/dev/null)
+    
+    if [ ${#CLONED_FLUTTER_PROJECTS[@]} -eq 0 ]; then
+        echo "❌ No Flutter projects (pubspec.yaml files) found in the cloned repository"
+        echo "💡 This might not be a Flutter project or the pubspec.yaml files are in unexpected locations"
+        return 1
+    fi
+    
+    echo "✅ Found ${#CLONED_FLUTTER_PROJECTS[@]} Flutter project(s)"
+    
+    # Store the found projects globally for the main script to use
+    FLUTTER_PROJECTS=("${CLONED_FLUTTER_PROJECTS[@]}")
+    return 0
+}
+
 # Function to get relative path (cross-platform)
 get_relative_path() {
     local target="$1"
@@ -191,54 +445,107 @@ if ! gh auth status &>/dev/null; then
     authenticate_github
 fi
 
-# Find current directory's pubspec.yaml or search for Flutter projects
-CURRENT_PUBSPEC="./pubspec.yaml"
+# Enhanced project discovery with GitHub integration
 FLUTTER_PROJECTS=()
+SELECTED_PUBSPEC=""
+SELECTED_PROJECT=""
 
+# Check if current directory has pubspec.yaml
+CURRENT_PUBSPEC="./pubspec.yaml"
 if [ -f "$CURRENT_PUBSPEC" ]; then
     echo "📱 Found pubspec.yaml in current directory"
-    SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
-    SELECTED_PROJECT=$(basename "$(pwd)")
-else
-    echo "🔍 Searching for Flutter projects..."
+    read -p "Use current directory project? (Y/n): " USE_CURRENT
     
-    # Search in common directories
-    SEARCH_DIRS=("$HOME/Development" "$HOME/Projects" "$HOME/dev" ".")
-    
-    for dir in "${SEARCH_DIRS[@]}"; do
-        if [ -d "$dir" ]; then
-            while IFS= read -r -d '' project; do
-                FLUTTER_PROJECTS+=("$project")
-            done < <(find "$dir" -maxdepth 3 -name "pubspec.yaml" -print0 2>/dev/null)
-        fi
-    done
-    
-    if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
-        echo "❌ No Flutter projects found. Run this from a Flutter project directory."
-        exit 1
+    if [[ ! $USE_CURRENT =~ ^[Nn]$ ]]; then
+        SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
+        SELECTED_PROJECT=$(basename "$(pwd)")
+        echo "📱 Using project: $SELECTED_PROJECT"
     fi
-    
-    echo ""
-    echo "Select a Flutter project:"
-    for i in "${!FLUTTER_PROJECTS[@]}"; do
-        PROJECT_DIR=$(dirname "${FLUTTER_PROJECTS[$i]}")
-        PROJECT_NAME=$(basename "$PROJECT_DIR")
-        RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
-        echo "$((i+1)). $PROJECT_NAME ($RELATIVE_PATH)"
-    done
-    
-    read -p "Enter project number: " PROJECT_NUM
-    
-    if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
-        echo "❌ Invalid selection"
-        exit 1
-    fi
-    
-    SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
-    SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
 fi
 
-echo "📱 Using project: $SELECTED_PROJECT"
+# If no project selected yet, proceed with source selection
+if [ -z "$SELECTED_PUBSPEC" ]; then
+    # Select project source (local or GitHub)
+    select_project_source
+    SOURCE_TYPE=$?
+    
+    case $SOURCE_TYPE in
+        1)
+            # Local directory scan
+            echo ""
+            echo "🔍 Searching for local Flutter projects..."
+            
+            # Search in common directories
+            SEARCH_DIRS=("$HOME/Development" "$HOME/Projects" "$HOME/dev" ".")
+            
+            for dir in "${SEARCH_DIRS[@]}"; do
+                if [ -d "$dir" ]; then
+                    while IFS= read -r -d '' project; do
+                        FLUTTER_PROJECTS+=("$project")
+                    done < <(find "$dir" -maxdepth 3 -name "pubspec.yaml" -print0 2>/dev/null)
+                fi
+            done
+            
+            if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
+                echo "❌ No Flutter projects found in local directories."
+                echo "💡 Try the GitHub fetch option or run this from a Flutter project directory."
+                exit 1
+            fi
+            ;;
+        2)
+            # GitHub repository fetch
+            SAVE_LOCATION=$(get_save_location)
+            if [ $? -ne 0 ]; then
+                echo "❌ Failed to get save location"
+                exit 1
+            fi
+            
+            if ! fetch_github_project "$SAVE_LOCATION"; then
+                echo "❌ Failed to fetch GitHub project"
+                exit 1
+            fi
+            
+            if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
+                echo "❌ No Flutter projects found in the fetched repository"
+                exit 1
+            fi
+            ;;
+        *)
+            echo "❌ Invalid source selection"
+            exit 1
+            ;;
+    esac
+    
+    # Project selection from found projects
+    if [ ${#FLUTTER_PROJECTS[@]} -eq 1 ]; then
+        # Only one project found, use it directly
+        SELECTED_PUBSPEC="${FLUTTER_PROJECTS[0]}"
+        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+        echo "📱 Using project: $SELECTED_PROJECT"
+    else
+        # Multiple projects found, let user choose
+        echo ""
+        echo "📋 Found ${#FLUTTER_PROJECTS[@]} Flutter projects:"
+        for i in "${!FLUTTER_PROJECTS[@]}"; do
+            PROJECT_DIR=$(dirname "${FLUTTER_PROJECTS[$i]}")
+            PROJECT_NAME=$(basename "$PROJECT_DIR")
+            RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
+            echo "$((i+1)). $PROJECT_NAME ($RELATIVE_PATH)"
+        done
+        
+        echo ""
+        read -p "Enter project number: " PROJECT_NUM
+        
+        if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
+            echo "❌ Invalid selection"
+            exit 1
+        fi
+        
+        SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
+        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+        echo "📱 Using project: $SELECTED_PROJECT"
+    fi
+fi
 
 # Function to add package to pubspec.yaml
 add_package_to_pubspec() {

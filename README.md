@@ -4,7 +4,9 @@ A cross-platform tool that transforms GitHub into your private package manager f
 
 ## 🚀 Features
 
-- **🔍 Project Discovery**: Automatically finds Flutter projects in common directories
+- **🔍 Enhanced Project Discovery**: 
+  - **Local Scan**: Automatically finds Flutter projects in common directories
+  - **GitHub Fetch**: Clone Flutter projects directly from GitHub with custom save locations
 - **📦 Multi-Repository Selection**: Select multiple repositories at once using an interactive interface
 - **🎯 Cross-Platform**: Works on Linux, macOS, and Windows
 - **🔐 GitHub Integration**: Seamless authentication and repository access via GitHub CLI
@@ -74,16 +76,19 @@ chmod +x scripts/linux-macos/linux_macos_full.sh
 
 ### 3. Follow the Interactive Process
 1. **Authentication**: The script will open GitHub authentication in your browser
-2. **Project Selection**: Choose your Flutter project from discovered projects
-3. **Repository Selection**: Use the interactive multi-selector:
+2. **Project Source Selection**: Choose how to find your Flutter project:
+   - **Local Scan**: Find existing projects on your machine
+   - **GitHub Fetch**: Clone a project from GitHub (with custom save location)
+3. **Project Selection**: Choose your Flutter project from discovered/cloned projects
+4. **Repository Selection**: Use the interactive multi-selector:
    - `↑/↓` or `j/k` to navigate
    - `SPACE` to select/deselect repositories
    - `ENTER` to confirm selection
    - `q` to quit
-4. **Package Configuration**: For each selected repository:
+5. **Package Configuration**: For each selected repository:
    - Choose package name (defaults to repository name)
    - Select branch/tag reference (defaults to 'main')
-5. **Automatic Integration**: Script updates pubspec.yaml with git dependencies
+6. **Automatic Integration**: Script updates pubspec.yaml with git dependencies
 
 ## 🎮 Interactive Interface
 
