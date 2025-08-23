@@ -148,9 +148,9 @@ select_project_source() {
 
     while true; do
         if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
-            read -p "Enter your choice (1-4, default: 4): " SOURCE_CHOICE
+            read -p "Enter your choice (1-4, default: 4): " SOURCE_CHOICE </dev/tty
         else
-            read -p "Enter your choice (1-3): " SOURCE_CHOICE
+            read -p "Enter your choice (1-3): " SOURCE_CHOICE </dev/tty
         fi
         
         # Use default if empty
@@ -776,7 +776,7 @@ elif [[ "$PROJECT_SOURCE_CHOICE" == "1" || "$PROJECT_SOURCE_CHOICE" == "2" ]] &&
     done
 
     echo ""
-    read -p "Enter project number: " PROJECT_NUM
+    read -p "Enter project number: " PROJECT_NUM </dev/tty
 
     if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
         echo "❌ Invalid selection"
