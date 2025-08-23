@@ -190,3 +190,38 @@ This project is open source. See LICENSE file for details.
 - [GitHub CLI Documentation](https://cli.github.com)
 - [Flutter Dependencies Guide](https://docs.flutter.dev/development/packages-and-plugins/using-packages)
 - [Git Dependencies in pubspec.yaml](https://dart.dev/tools/pub/dependencies#git-packages)
+
+# Check if current directory has pubspec.yaml
+CURRENT_PUBSPEC="./pubspec.yaml"
+if [ -f "$CURRENT_PUBSPEC" ]; then
+    echo "📱 Found pubspec.yaml in current directory"
+    read -p "Use current directory project? (Y/n): " USE_CURRENT
+
+    if [[ ! $USE_CURRENT =~ ^[Nn]$ ]]; then
+        SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
+        SELECTED_PROJECT=$(basename "$(pwd)")
+        echo "📱 Using project: $SELECTED_PROJECT"
+        
+        # CRITICAL: Simulate the terminal state that GitHub operations create
+        # This is the missing piece when starting from current directory
+        echo "🔧 Preparing terminal for interactive selection..."
+        
+        # Mimic what gh auth login and other GitHub operations do to terminal
+        if command -v stty >/dev/null 2>&1; then
+            # Reset and prepare terminal like GitHub CLI does
+            stty sane
+            stty -echo -icanon
+            
+            # Brief interaction simulation that primes the terminal
+            sleep 0.1
+            
+            # Reset to normal for the interim
+            stty echo icanon
+        fi
+        
+        # Additional step: simulate some I/O like GitHub operations do
+        echo -n "✓ Terminal prepared"
+        sleep 0.05
+        echo ""
+    fi
+fi
