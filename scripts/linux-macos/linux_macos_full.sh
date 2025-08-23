@@ -16,6 +16,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
+# Check for local pubspec.yaml early
+LOCAL_PUBSPEC_AVAILABLE=false
+if [ -f "./pubspec.yaml" ]; then
+    LOCAL_PUBSPEC_AVAILABLE=true
+fi
+
 # Default configuration
 CONFIG_SEARCH_PATHS=("$HOME/Development" "$HOME/Projects" "$HOME/dev" ".")
 CONFIG_SEARCH_DEPTH=3
@@ -130,14 +136,32 @@ select_project_source() {
     echo "1. Scan local directories for existing Flutter projects"
     echo "2. Fetch Flutter project from GitHub repository"
     echo "3. Configure search settings"
+    
+    # Always show current directory option if pubspec.yaml exists
+    if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+        echo "4. Use current directory (pubspec.yaml found) [DEFAULT]"
+        local default_choice="4"
+    else
+        local default_choice="1"
+    fi
     echo ""
 
     while true; do
-        read -p "Enter your choice (1-3): " SOURCE_CHOICE
+        if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+            read -p "Enter your choice (1-4, default: 4): " SOURCE_CHOICE
+        else
+            read -p "Enter your choice (1-3): " SOURCE_CHOICE
+        fi
+        
+        # Use default if empty
+        if [ -z "$SOURCE_CHOICE" ]; then
+            SOURCE_CHOICE="$default_choice"
+        fi
 
         case "$SOURCE_CHOICE" in
             1)
-                echo "🔍 Selected: Local directory scan"
+                clear
+echo "🔍 Selected: Local directory scan"
                 PROJECT_SOURCE_CHOICE=1
                 return 0
                 ;;
@@ -151,8 +175,21 @@ select_project_source() {
                 PROJECT_SOURCE_CHOICE=3
                 return 0
                 ;;
+            4)
+                if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+                    echo "📱 Selected: Current directory"
+                    PROJECT_SOURCE_CHOICE=4
+                    return 0
+                else
+                    echo "❌ Current directory option not available."
+                fi
+                ;;
             *)
-                echo "❌ Invalid choice. Please enter 1-3."
+                if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+                    echo "❌ Invalid choice. Please enter 1-4."
+                else
+                    echo "❌ Invalid choice. Please enter 1-3."
+                fi
                 ;;
         esac
     done
@@ -230,6 +267,7 @@ fetch_github_project() {
     local SAVE_LOCATION="$1"
 
     echo ""
+    clear
     echo "🔍 GitHub Project Options:"
     echo "1. Enter specific repository URL (e.g., github.com/user/flutter-project)"
     echo "2. Browse and select from your GitHub repositories"
@@ -319,6 +357,9 @@ fetch_from_user_repos() {
     echo "📋 Found ${#REPO_OPTIONS[@]} repositories:"
     echo ""
 
+    # Clear screen for clean selection interface
+    clear
+    
     # Use multiselect function in single selection mode
     local SELECTED_INDICES=()
     multiselect "Select repository to clone:" REPO_OPTIONS SELECTED_INDICES true
@@ -637,119 +678,114 @@ FLUTTER_PROJECTS=()
 SELECTED_PUBSPEC=""
 SELECTED_PROJECT=""
 
-# Check if current directory has pubspec.yaml
-CURRENT_PUBSPEC="./pubspec.yaml"
-if [ -f "$CURRENT_PUBSPEC" ]; then
-    echo "📱 Found pubspec.yaml in current directory"
-    read -p "Use current directory project? (Y/n): " USE_CURRENT
-
-    if [[ ! $USE_CURRENT =~ ^[Nn]$ ]]; then
-        SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
-        SELECTED_PROJECT=$(basename "$(pwd)")
-        echo "📱 Using project: $SELECTED_PROJECT"
-    fi
-fi
-
-# If no project selected yet, proceed with source selection
-if [ -z "$SELECTED_PUBSPEC" ]; then
-    # Main loop for handling configuration and project selection
-    while true; do
-        select_project_source
-
-        case $PROJECT_SOURCE_CHOICE in
-            3)
-                # Configuration
-                configure_search_settings
-                continue  # Go back to main menu
-                ;;
-            *)
-                break  # Exit loop for other choices
-                ;;
-        esac
-    done
+# Project selection
+# Main loop for handling configuration and project selection
+while true; do
+    select_project_source
 
     case $PROJECT_SOURCE_CHOICE in
-        1)
-            # Local directory scan
-            echo ""
-            echo "🔍 Searching for local Flutter projects..."
-
-            # Use configured search paths and settings
-            if [ "$CONFIG_FULL_DISK_SEARCH" = "true" ]; then
-                echo "⚠️  Performing full disk search (this may take a while)..."
-                while IFS= read -r -d '' project; do
-                    FLUTTER_PROJECTS+=("$project")
-                done < <(find / -name "pubspec.yaml" -print0 2>/dev/null)
-            else
-                for dir in "${CONFIG_SEARCH_PATHS[@]}"; do
-                    if [ -d "$dir" ]; then
-                        echo "🔍 Searching in: $dir (depth: $CONFIG_SEARCH_DEPTH)"
-                        while IFS= read -r -d '' project; do
-                            FLUTTER_PROJECTS+=("$project")
-                        done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" -name "pubspec.yaml" -print0 2>/dev/null)
-                    fi
-                done
-            fi
-
-            if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
-                echo "❌ No Flutter projects found in configured directories."
-                echo "💡 Try configuring different search paths, enabling full disk search, or use the GitHub fetch option."
-                exit 1
-            fi
+        3)
+            # Configuration
+            configure_search_settings
+            continue  # Go back to main menu
             ;;
-        2)
-            # GitHub repository fetch
-            get_save_location
-            if [ $? -ne 0 ]; then
-                echo "❌ Failed to get save location"
-                exit 1
-            fi
-
-            if ! fetch_github_project "$PROJECT_SAVE_LOCATION"; then
-                echo "❌ Failed to fetch GitHub project"
-                exit 1
-            fi
-
-            if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
-                echo "❌ No Flutter projects found in the fetched repository"
-                exit 1
-            fi
+        4)
+            # Current directory selected - no need to loop
+            break
             ;;
         *)
-            echo "❌ Invalid source selection: $PROJECT_SOURCE_CHOICE"
-            exit 1
+            break  # Exit loop for other choices
             ;;
     esac
+done
 
-    # Project selection from found projects
-    if [ ${#FLUTTER_PROJECTS[@]} -eq 1 ]; then
-        # Only one project found, use it directly
-        SELECTED_PUBSPEC="${FLUTTER_PROJECTS[0]}"
-        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
-        echo "📱 Using project: $SELECTED_PROJECT"
-    else
-        # Multiple projects found, let user choose
+case $PROJECT_SOURCE_CHOICE in
+    1)
+        # Local directory scan
         echo ""
-        echo "📋 Found ${#FLUTTER_PROJECTS[@]} Flutter projects:"
-        for i in "${!FLUTTER_PROJECTS[@]}"; do
-            PROJECT_DIR=$(dirname "${FLUTTER_PROJECTS[$i]}")
-            PROJECT_NAME=$(basename "$PROJECT_DIR")
-            RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
-            echo "$((i+1)). $PROJECT_NAME ($RELATIVE_PATH)"
-        done
+        echo "🔍 Searching for local Flutter projects..."
 
-        echo ""
-        read -p "Enter project number: " PROJECT_NUM
+        # Use configured search paths and settings
+        if [ "$CONFIG_FULL_DISK_SEARCH" = "true" ]; then
+            echo "⚠️  Performing full disk search (this may take a while)..."
+            while IFS= read -r -d '' project; do
+                FLUTTER_PROJECTS+=("$project")
+            done < <(find / -name "pubspec.yaml" -print0 2>/dev/null)
+        else
+            for dir in "${CONFIG_SEARCH_PATHS[@]}"; do
+                if [ -d "$dir" ]; then
+                    echo "🔍 Searching in: $dir (depth: $CONFIG_SEARCH_DEPTH)"
+                    while IFS= read -r -d '' project; do
+                        FLUTTER_PROJECTS+=("$project")
+                    done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" -name "pubspec.yaml" -print0 2>/dev/null)
+                fi
+            done
+        fi
 
-        if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
-            echo "❌ Invalid selection"
+        if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
+            echo "❌ No Flutter projects found in configured directories."
+            echo "💡 Try configuring different search paths, enabling full disk search, or use the GitHub fetch option."
+            exit 1
+        fi
+        ;;
+    2)
+        # GitHub repository fetch
+        get_save_location
+        if [ $? -ne 0 ]; then
+            echo "❌ Failed to get save location"
             exit 1
         fi
 
-        SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
-        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
-        echo "📱 Using project: $SELECTED_PROJECT"
+        if ! fetch_github_project "$PROJECT_SAVE_LOCATION"; then
+            echo "❌ Failed to fetch GitHub project"
+            exit 1
+        fi
+
+        if [ ${#FLUTTER_PROJECTS[@]} -eq 0 ]; then
+            echo "❌ No Flutter projects found in the fetched repository"
+            exit 1
+        fi
+        ;;
+    4)
+        # Current directory
+        SELECTED_PUBSPEC="./pubspec.yaml"
+        SELECTED_PROJECT=$(basename "$(pwd)")
+        echo "📱 Using current directory project: $SELECTED_PROJECT"
+        ;;
+    *)
+        echo "❌ Invalid source selection: $PROJECT_SOURCE_CHOICE"
+        exit 1
+        ;;
+esac
+
+# Project selection from found projects (only for options 1 and 2)
+if [[ "$PROJECT_SOURCE_CHOICE" == "1" || "$PROJECT_SOURCE_CHOICE" == "2" ]] && [ ${#FLUTTER_PROJECTS[@]} -eq 1 ]; then
+    # Only one project found, use it directly
+    SELECTED_PUBSPEC="${FLUTTER_PROJECTS[0]}"
+    SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+    echo "📱 Using project: $SELECTED_PROJECT"
+elif [[ "$PROJECT_SOURCE_CHOICE" == "1" || "$PROJECT_SOURCE_CHOICE" == "2" ]] && [ ${#FLUTTER_PROJECTS[@]} -gt 1 ]; then
+    # Multiple projects found, let user choose
+    echo ""
+    echo "📋 Found ${#FLUTTER_PROJECTS[@]} Flutter projects:"
+    for i in "${!FLUTTER_PROJECTS[@]}"; do
+        PROJECT_DIR=$(dirname "${FLUTTER_PROJECTS[$i]}")
+        PROJECT_NAME=$(basename "$PROJECT_DIR")
+        RELATIVE_PATH=$(get_relative_path "$PROJECT_DIR")
+        echo "$((i+1)). $PROJECT_NAME ($RELATIVE_PATH)"
+    done
+
+    echo ""
+    read -p "Enter project number: " PROJECT_NUM
+
+    if [[ ! "$PROJECT_NUM" =~ ^[0-9]+$ ]] || [ "$PROJECT_NUM" -lt 1 ] || [ "$PROJECT_NUM" -gt ${#FLUTTER_PROJECTS[@]} ]; then
+        echo "❌ Invalid selection"
+        exit 1
     fi
+
+    SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
+    SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+    echo "📱 Using project: $SELECTED_PROJECT"
 fi
 
 # Get repositories
@@ -782,6 +818,7 @@ if [ ${#REPO_OPTIONS[@]} -eq 0 ]; then
 fi
 
 echo ""
+clear
 echo "📋 Select repositories to add as packages:"
 echo ""
 
@@ -793,6 +830,9 @@ if [ -f "./pubspec.yaml" ] && [ -n "$SELECTED_PUBSPEC" ]; then
     echo "🔧 Initializing terminal for interactive selection..."
 
 fi
+
+# Clear screen for clean selection interface
+clear
 
 # Use multiselect function
 SELECTED_INDICES=()

@@ -76,14 +76,21 @@ multiselect() {
         fi
         
         echo ""
+        # Always show cursor position
+        echo "Cursor: ${options_ref[$cursor]}"
+        
         if [[ "$single_mode" == "true" ]]; then
-            if [[ ${#selected_indices[@]} -gt 0 ]]; then
-                echo "Selected: ${options_ref[${selected_indices[0]}]}"
-            else
-                echo "No selection"
-            fi
+            # Single mode doesn't need to show selection status
+            echo ""
         else
             echo "Selected: ${#selected_indices[@]} items"
+            if [[ ${#selected_indices[@]} -gt 0 ]]; then
+                echo ""
+                echo "Currently selected:"
+                for idx in "${selected_indices[@]}"; do
+                    echo "  ✓ ${options_ref[$idx]}"
+                done
+            fi
         fi
     }
     
