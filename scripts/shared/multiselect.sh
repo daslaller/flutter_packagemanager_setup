@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Multi-selection menu function
-# Usage: multiselect "prompt" array_name selected_indices_var_name [single_mode] [debug_mode]
+# Usage: multiselect "prompt" array_name selected_indices_var_name [single_mode]
 multiselect() {
     local prompt="$1"
     local options_array_name="$2"
@@ -28,11 +28,10 @@ multiselect() {
         echo "$prompt"
         echo ""
         if [[ "$single_mode" == "true" ]]; then
-            echo "Use ↑/↓ or j/k to navigate, SPACE/ENTER to select, numbers for direct select, q to quit"
+            echo "Use ↑/↓ or j/k to navigate, SPACE or ENTER to select, q to quit"
         else
-            echo "Use ↑/↓ or j/k to navigate, SPACE to select/deselect, ENTER to confirm, numbers for direct select, q to quit"
+            echo "Use ↑/↓ or j/k to navigate, SPACE to select/deselect, ENTER to confirm, q to quit"
         fi
-        # ... existing code ...
         echo ""
         
         # Calculate window bounds
@@ -41,7 +40,7 @@ multiselect() {
             window_end=${#options_ref[@]}
         fi
         
-        # Show 'hidden above' indicator above the list
+        # Show 'hidden above' indicator
         if [[ $window_start -gt 0 ]]; then
             echo "... ($window_start more above) ..."
             echo ""
@@ -50,6 +49,8 @@ multiselect() {
         for ((i=window_start; i<window_end; i++)); do
             local prefix="  "
             local checkbox="[ ]"
+            
+            # Check if this item is selected
             if [[ "${selected[i]}" == "true" ]]; then
                 if [[ "$single_mode" == "true" ]]; then
                     checkbox="[●]"
@@ -57,6 +58,8 @@ multiselect() {
                     checkbox="[✓]"
                 fi
             fi
+            
+            # Highlight current cursor position
             if [[ $i -eq $cursor ]]; then
                 prefix="► "
                 echo -e "\033[7m$prefix$checkbox ${options_ref[i]}\033[0m"
@@ -65,7 +68,7 @@ multiselect() {
             fi
         done
         
-        # Show 'hidden below' indicator below the list
+        # Show 'hidden below' indicator
         if [[ $window_end -lt ${#options_ref[@]} ]]; then
             local remaining=$((${#options_ref[@]} - window_end))
             echo ""
@@ -84,20 +87,9 @@ multiselect() {
         fi
     }
     
-    # Ensure we have a terminal
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
-        echo "❌ Error: This function requires an interactive terminal"
-        return 1
-    fi
-    
-    # Open controlling TTY on FD 3 and manage its mode locally
-    local old_stty=""
-    if [[ -t 0 ]]; then
-        old_stty=$(stty -g 2>/dev/null)
-    else
-        old_stty=$(stty -g </dev/tty 2>/dev/null)
-    fi
-    exec 3</dev/tty 2>/dev/null || exec 3<&0
+    # Set up proper terminal handling
+    exec 3</dev/tty
+    local old_stty=$(stty -g </dev/tty 2>/dev/null)
     stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null
     
     cleanup() {
@@ -111,43 +103,34 @@ multiselect() {
     while true; do
         draw_menu
         
-        # Read a single real key (skip nulls)
+        # Read single character using dd for raw input
         local key=""
-        while true; do
-            if read -rsn1 -u 3 key 2>/dev/null; then
-                [[ -n "$key" ]] && break
-            fi
-        done
+        key=$(dd bs=1 count=1 </dev/tty 2>/dev/null)
         
-        if [[ "$debug_mode" == "true" ]]; then
-            echo "DEBUG: Key pressed: '$key' (ASCII: $(printf '%d' "'$key" 2>/dev/null || echo "N/A"))" >> /tmp/multiselect_debug.log
-        fi
+        # Log every key press
+        echo "Key: '$key' ASCII: $(printf '%d' "'$key" 2>/dev/null || echo 'N/A')" >> /tmp/multiselect_keys.log
         
         case "$key" in
-            $'\x1b')  # ESC sequence with short timeouts
-                local k1="" k2=""
-                read -rsn1 -u 3 -t 0.02 k1 2>/dev/null || k1=""
-                if [[ "$k1" == "[" ]]; then
-                    read -rsn1 -u 3 -t 0.02 k2 2>/dev/null || k2=""
-                    case "$k2" in
-                        A) # Up
-                            if ((cursor > 0)); then
-                                ((cursor--))
-                                (( cursor < window_start )) && window_start=$cursor
+            $'\x1b')  # ESC sequence - read next 2 chars with dd
+                local seq=$(dd bs=1 count=2 </dev/tty 2>/dev/null)
+                case "$seq" in
+                    '[A') # Up arrow
+                        if ((cursor > 0)); then
+                            ((cursor--))
+                            ((cursor < window_start)) && window_start=$cursor
+                        fi
+                        ;;
+                    '[B') # Down arrow
+                        if ((cursor < ${#options_ref[@]} - 1)); then
+                            ((cursor++))
+                            if [[ $cursor -ge $((window_start + window_size)) ]]; then
+                                window_start=$((cursor - window_size + 1))
                             fi
-                            ;;
-                        B) # Down
-                            if ((cursor < ${#options_ref[@]} - 1)); then
-                                ((cursor++))
-                                if [[ $cursor -ge $((window_start + window_size)) ]]; then
-                                    window_start=$((cursor - window_size + 1))
-                                fi
-                            fi
-                            ;;
-                    esac
-                fi
+                        fi
+                        ;;
+                esac
                 ;;
-            'j')
+            'j') # j key
                 if ((cursor < ${#options_ref[@]} - 1)); then
                     ((cursor++))
                     if [[ $cursor -ge $((window_start + window_size)) ]]; then
@@ -155,22 +138,26 @@ multiselect() {
                     fi
                 fi
                 ;;
-            'k')
+            'k') # k key
                 if ((cursor > 0)); then
                     ((cursor--))
-                    (( cursor < window_start )) && window_start=$cursor
+                    ((cursor < window_start)) && window_start=$cursor
                 fi
                 ;;
-            ' ') # Space toggles selection
+            ' '|$'\x20'|$'\040'|"'") # Space (multiple possible formats including quote)
+                echo "SPACE detected!" >> /tmp/multiselect_keys.log
                 if [[ "$single_mode" == "true" ]]; then
-                    for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
+                    # Single mode: select and exit
+                    for ((i=0; i<${#selected[@]}; i++)); do
+                        selected[i]=false
+                    done
                     selected[cursor]=true
                     selected_indices=($cursor)
                     break
                 else
+                    # Multi mode: toggle selection (NO BREAK EVER)
                     if [[ "${selected[cursor]}" == "true" ]]; then
                         selected[cursor]=false
-                        # Remove from list
                         local tmp=()
                         for si in "${selected_indices[@]}"; do
                             [[ "$si" != "$cursor" ]] && tmp+=("$si")
@@ -178,71 +165,38 @@ multiselect() {
                         selected_indices=("${tmp[@]}")
                     else
                         selected[cursor]=true
-                        selected_indices+=("$cursor")
+                        selected_indices+=($cursor)
                     fi
                 fi
                 ;;
-            $'\r'|$'\n') # Enter (CR or LF)
+            $'\n'|$'\r'|$'\x0d'|$'\x0a'|$'\0') # Enter (including null character)
+                echo "ENTER detected!" >> /tmp/multiselect_keys.log
                 if [[ "$single_mode" == "true" ]]; then
-                    for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
+                    # Single mode: select current and exit
+                    for ((i=0; i<${#selected[@]}; i++)); do
+                        selected[i]=false
+                    done
                     selected[cursor]=true
                     selected_indices=($cursor)
-                    break
-                else
-                    if [[ ${#selected_indices[@]} -gt 0 ]]; then
-                        break
-                    else
-                        echo ""
-                        echo "⚠️  No items selected. Use SPACE to select items, then ENTER to confirm."
-                        sleep 1
-                    fi
                 fi
+                break
                 ;;
-            'q'|'Q')
+            'q'|'Q') # Quit
                 selected_indices=()
                 break
                 ;;
-            [1-9])
-                local num=$(( $(printf '%d' "'$key") - 48 ))
-                if (( num>=1 && num<=${#options_ref[@]} )); then
-                    local idx=$((num-1))
-                    if [[ "$single_mode" == "true" ]]; then
-                        for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
-                        selected[idx]=true
-                        selected_indices=($idx)
-                        cursor=$idx
-                        break
-                    else
-                        if [[ "${selected[idx]}" == "true" ]]; then
-                            selected[idx]=false
-                            local tmp=()
-                            for si in "${selected_indices[@]}"; do
-                                [[ "$si" != "$idx" ]] && tmp+=("$si")
-                            done
-                            selected_indices=("${tmp[@]}")
-                        else
-                            selected[idx]=true
-                            selected_indices+=("$idx")
-                        fi
-                        cursor=$idx
-                        if [[ $cursor -lt $window_start || $cursor -ge $((window_start + window_size)) ]]; then
-                            window_start=$((cursor - window_size / 2))
-                            (( window_start < 0 )) && window_start=0
-                        fi
-                    fi
-                fi
+            *) # Catch all other keys
+                echo "UNHANDLED Key: '$key' ASCII: $(printf '%d' "'$key" 2>/dev/null || echo 'N/A')" >> /tmp/multiselect_keys.log
                 ;;
-            *) : ;;
         esac
     done
     
+    # Cleanup terminal mode and restore normal settings
     cleanup
+    stty echo icanon </dev/tty 2>/dev/null || true
     
-    # Sort and return
-    if [[ ${#selected_indices[@]} -gt 0 ]]; then
-        IFS=$'\n' selected_indices=($(sort -n <<<"${selected_indices[*]}"))
-        unset IFS
-    fi
+    
+    # Return selected indices using eval (bash 3.x compatible)
     eval "${selected_array_name}=(\"\${selected_indices[@]}\")"
     
     clear

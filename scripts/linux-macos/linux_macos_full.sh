@@ -12,269 +12,7 @@ echo "=========================="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source shared functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Multi-selection menu function
-# Usage: multiselect "prompt" array_name selected_indices_var_name [single_mode] [debug_mode]
-multiselect() {
-    local prompt="$1"
-    local options_array_name="$2"
-    local selected_array_name="$3"
-    local single_mode="${4:-false}"
-    local debug_mode="${5:-false}"
-
-    # Create local reference to the options array (bash 3.x compatible)
-    eval "local options_ref=(\"\${${options_array_name}[@]}\")"
-
-    local selected=()
-    local cursor=0
-    local selected_indices=()
-    local window_start=0
-    local window_size=10
-
-    # Initialize selected array with false values
-    for ((i=0; i<${#options_ref[@]}; i++)); do
-        selected[i]=false
-    done
-
-    draw_menu() {
-        clear
-        echo "$prompt"
-        echo ""
-        if [[ "$single_mode" == "true" ]]; then
-            echo "Use ↑/↓ or j/k to navigate, SPACE/ENTER to select, numbers for direct select, q to quit"
-        else
-            echo "Use ↑/↓ or j/k to navigate, SPACE to select/deselect, ENTER to confirm, numbers for direct select, q to quit"
-        fi
-
-        # Calculate window bounds
-        local window_end=$((window_start + window_size))
-        if [[ $window_end -gt ${#options_ref[@]} ]]; then
-            window_end=${#options_ref[@]}
-        fi
-
-        echo ""
-
-        # Show 'hidden above' indicator above the list
-        if [[ $window_start -gt 0 ]]; then
-            echo "... ($window_start more above) ..."
-            echo ""
-        fi
-
-        for ((i=window_start; i<window_end; i++)); do
-            local prefix="  "
-            local checkbox="[ ]"
-
-            # Check if this item is selected
-            if [[ "${selected[i]}" == "true" ]]; then
-                if [[ "$single_mode" == "true" ]]; then
-                    checkbox="[●]"
-                else
-                    checkbox="[✓]"
-                fi
-            fi
-
-            # Highlight current cursor position
-            if [[ $i -eq $cursor ]]; then
-                prefix="► "
-                echo -e "\033[7m$prefix$checkbox ${options_ref[i]}\033[0m"
-            else
-                echo "$prefix$checkbox ${options_ref[i]}"
-            fi
-        done
-
-        # Show 'hidden below' indicator below the list
-        if [[ $window_end -lt ${#options_ref[@]} ]]; then
-            local remaining=$((${#options_ref[@]} - window_end))
-            echo ""
-            echo "... ($remaining more below) ..."
-        fi
-
-        echo ""
-        if [[ "$single_mode" == "true" ]]; then
-            if [[ ${#selected_indices[@]} -gt 0 ]]; then
-                echo "Selected: ${options_ref[${selected_indices[0]}]}"
-            else
-                echo "No selection"
-            fi
-        else
-            echo "Selected: ${#selected_indices[@]} items"
-        fi
-    }
-
-    # Ensure we have a proper terminal for input
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
-        echo "❌ Error: This function requires an interactive terminal"
-        return 1
-    fi
-
-    # Open the controlling TTY explicitly and manage its mode locally
-    local old_stty=""
-    if [[ -t 0 ]]; then
-        old_stty=$(stty -g 2>/dev/null)
-    else
-        old_stty=$(stty -g </dev/tty 2>/dev/null)
-    fi
-
-    # Use a dedicated FD for /dev/tty so stdin can't interfere
-    exec 3</dev/tty 2>/dev/null || exec 3<&0
-
-    # Non-canonical, no-echo for precise key reading on the TTY
-    stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null
-
-    cleanup() {
-        # Restore terminal settings and close FD
-        if [[ -n "$old_stty" ]]; then
-            stty "$old_stty" </dev/tty 2>/dev/null || true
-        fi
-        exec 3<&- 2>/dev/null || true
-    }
-    trap cleanup EXIT INT TERM
-
-    while true; do
-        draw_menu
-
-        # Read a single key from /dev/tty, skipping nulls
-        local key=""
-        while true; do
-            if read -rsn1 -u 3 key 2>/dev/null; then
-                # Filter out spurious nulls
-                [[ -n "$key" ]] && break
-            fi
-        done
-
-        if [[ "$debug_mode" == "true" ]]; then
-            echo "DEBUG: Key pressed: '$key' (ASCII: $(printf '%d' "'$key" 2>/dev/null || echo "N/A"))" >> /tmp/multiselect_debug.log
-        fi
-
-        case "$key" in
-            $'\x1b')  # ESC sequence
-                # Try to read the next two bytes of an ANSI sequence with short timeouts
-                local k1="" k2=""
-                read -rsn1 -u 3 -t 0.02 k1 2>/dev/null || k1=""
-                if [[ "$k1" == "[" ]]; then
-                    read -rsn1 -u 3 -t 0.02 k2 2>/dev/null || k2=""
-                    case "$k2" in
-                        A) # Up
-                            if ((cursor > 0)); then
-                                ((cursor--))
-                                (( cursor < window_start )) && window_start=$cursor
-                            fi
-                            ;;
-                        B) # Down
-                            if ((cursor < ${#options_ref[@]} - 1)); then
-                                ((cursor++))
-                                if [[ $cursor -ge $((window_start + window_size)) ]]; then
-                                    window_start=$((cursor - window_size + 1))
-                                fi
-                            fi
-                            ;;
-                        *) : ;; # ignore other sequences
-                    esac
-                fi
-                ;;
-            'j') # Down (vim-style)
-                if ((cursor < ${#options_ref[@]} - 1)); then
-                    ((cursor++))
-                    if [[ $cursor -ge $((window_start + window_size)) ]]; then
-                        window_start=$((cursor - window_size + 1))
-                    fi
-                fi
-                ;;
-            'k') # Up (vim-style)
-                if ((cursor > 0)); then
-                    ((cursor--))
-                    (( cursor < window_start )) && window_start=$cursor
-                fi
-                ;;
-            ' ') # Space toggles selection in multi-select
-                if [[ "$single_mode" == "true" ]]; then
-                    for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
-                    selected[cursor]=true
-                    selected_indices=($cursor)
-                    break
-                else
-                    if [[ "${selected[cursor]}" == "true" ]]; then
-                        selected[cursor]=false
-                        # Remove from selected_indices
-                        local tmp=()
-                        for si in "${selected_indices[@]}"; do
-                            [[ "$si" != "$cursor" ]] && tmp+=("$si")
-                        done
-                        selected_indices=("${tmp[@]}")
-                    else
-                        selected[cursor]=true
-                        selected_indices+=($cursor)
-                    fi
-                fi
-                ;;
-            $'\r'|$'\n') # Enter
-                if [[ "$single_mode" == "true" ]]; then
-                    for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
-                    selected[cursor]=true
-                    selected_indices=($cursor)
-                    break
-                else
-                    if [[ ${#selected_indices[@]} -gt 0 ]]; then
-                        break
-                    else
-                        echo ""
-                        echo "⚠️  No items selected. Use SPACE to select items, then ENTER to confirm."
-                        sleep 1
-                    fi
-                fi
-                ;;
-            'q'|'Q') # Quit
-                selected_indices=()
-                break
-                ;;
-            [1-9]) # Direct select by number (1-9)
-                local num=$(( $(printf '%d' "'$key") - 48 ))
-                if (( num>=1 && num<=${#options_ref[@]} )); then
-                    local idx=$((num-1))
-                    if [[ "$single_mode" == "true" ]]; then
-                        for ((i=0; i<${#selected[@]}; i++)); do selected[i]=false; done
-                        selected[idx]=true
-                        selected_indices=($idx)
-                        cursor=$idx
-                        break
-                    else
-                        if [[ "${selected[idx]}" == "true" ]]; then
-                            selected[idx]=false
-                            # Remove
-                            local tmp=()
-                            for si in "${selected_indices[@]}"; do
-                                [[ "$si" != "$idx" ]] && tmp+=("$si")
-                            done
-                            selected_indices=("${tmp[@]}")
-                        else
-                            selected[idx]=true
-                            selected_indices+=("$idx")
-                        fi
-                        cursor=$idx
-                        if [[ $cursor -lt $window_start || $cursor -ge $((window_start + window_size)) ]]; then
-                            window_start=$((cursor - window_size / 2))
-                            (( window_start < 0 )) && window_start=0
-                        fi
-                    fi
-                fi
-                ;;
-            *) : ;; # ignore other keys
-        esac
-    done
-
-    # Restore terminal settings and close tty FD
-    cleanup
-
-    # Sort selected indices
-    if [[ ${#selected_indices[@]} -gt 0 ]]; then
-        IFS=$'\n' selected_indices=($(sort -n <<<"${selected_indices[*]}"))
-        unset IFS
-    fi
-
-    # Return selected indices using eval (bash 3.x compatible)
-    eval "${selected_array_name}=(\"\${selected_indices[@]}\")"
-
-    clear
-}
+# Source shared functions
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
@@ -615,7 +353,8 @@ clone_and_scan_project() {
     # Check if directory already exists
     if [ -d "$CLONE_PATH" ]; then
         echo "⚠️  Directory already exists: $CLONE_PATH"
-        read -p "Remove existing directory and re-clone? (y/N): " OVERWRITE
+        echo "Remove existing directory and re-clone? (y/N): "
+        read OVERWRITE </dev/tty
         if [[ $OVERWRITE =~ ^[Yy]$ ]]; then
             rm -rf "$CLONE_PATH"
         else
@@ -908,22 +647,6 @@ if [ -f "$CURRENT_PUBSPEC" ]; then
         SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
         SELECTED_PROJECT=$(basename "$(pwd)")
         echo "📱 Using project: $SELECTED_PROJECT"
-
-        # CRITICAL FIX: Initialize terminal state that GitHub operations would have done
-        if command -v stty >/dev/null 2>&1; then
-            # Save current state
-            ORIGINAL_STTY=$(stty -g 2>/dev/null)
-
-            # Force a terminal reset like GitHub CLI operations do
-            stty sane
-
-            # Simulate the input/output that primes the terminal for multiselect
-            # This is what's missing when we skip GitHub operations
-            printf "\r" >/dev/tty
-
-            # Brief delay to let terminal settle
-            sleep 0.05
-        fi
     fi
 fi
 
@@ -1069,28 +792,11 @@ if [ -f "./pubspec.yaml" ] && [ -n "$SELECTED_PUBSPEC" ]; then
     # We used current directory, so we missed GitHub operations that initialize terminal
     echo "🔧 Initializing terminal for interactive selection..."
 
-    # Simulate the exact terminal initialization that GitHub CLI operations perform
-    if command -v stty >/dev/null 2>&1; then
-        # This is what gh repo list and other gh commands do internally
-        stty -icanon min 1 time 0 2>/dev/null
-
-        # Critical: simulate the I/O interaction that gh commands create
-        # This primes the terminal's input buffer handling
-        printf '' >/dev/tty, c 2>/dev/null
-
-        # Brief settle time like network operations create
-        sleep 0.02
-
-        # Reset to normal state for the prompt display
-        stty icanon 2>/dev/null
-    fi
-
-    echo "✓ Terminal ready for selection"
 fi
 
 # Use multiselect function
 SELECTED_INDICES=()
-multiselect "Select repositories (SPACE to select, ENTER to confirm):" REPO_OPTIONS SELECTED_INDICES
+multiselect "Select repositories (SPACE to select, ENTER to confirm):" REPO_OPTIONS SELECTED_INDICES false true
 
 if [ ${#SELECTED_INDICES[@]} -eq 0 ]; then
     echo "❌ No repositories selected"
