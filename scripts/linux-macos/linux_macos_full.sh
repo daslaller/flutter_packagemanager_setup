@@ -16,26 +16,52 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
+# Resolve scripts root (parent of this script's directory)
+SCRIPTS_ROOT="$(dirname "$SCRIPT_DIR")"
+
 # Ensure TTY is restored for subsequent prompts
 ensure_tty_ready() {
     stty sane </dev/tty 2>/dev/null || true
     stty echo icanon </dev/tty 2>/dev/null || true
 }
 
-# Detect nearest pubspec.yaml by searching upward from current directory
+# Detect nearest pubspec.yaml by searching upward from both script location and current directory
+find_upwards_pubspec_from() {
+    local start_dir="$1"
+    local exclude_prefix="$2"
+    local search_dir="$start_dir"
+    while true; do
+        if [ -f "$search_dir/pubspec.yaml" ]; then
+            # Skip pubspecs that are inside the script bundle directory
+            if [ -n "$exclude_prefix" ] && [[ "$search_dir" == "$exclude_prefix"* ]]; then
+                : # continue searching upward
+            else
+                echo "$search_dir/pubspec.yaml"
+                return 0
+            fi
+        fi
+        local parent_dir
+        parent_dir="$(dirname "$search_dir")"
+        if [ "$parent_dir" = "$search_dir" ]; then
+            break
+        fi
+        search_dir="$parent_dir"
+    done
+    return 1
+}
+
 DETECTED_PUBSPEC_PATH=""
-SEARCH_DIR="$(pwd)"
-while true; do
-    if [ -f "$SEARCH_DIR/pubspec.yaml" ]; then
-        DETECTED_PUBSPEC_PATH="$SEARCH_DIR/pubspec.yaml"
-        break
-    fi
-    PARENT_DIR="$(dirname "$SEARCH_DIR")"
-    if [ "$PARENT_DIR" = "$SEARCH_DIR" ]; then
-        break
-    fi
-    SEARCH_DIR="$PARENT_DIR"
-done
+
+# Prefer detection from the script's directory (skip script bundle pubspecs)
+PUBSPEC_FROM_SCRIPT="$(find_upwards_pubspec_from "$SCRIPT_DIR" "$SCRIPTS_ROOT" || true)"
+# Fallback: detection from the current working directory
+PUBSPEC_FROM_CWD="$(find_upwards_pubspec_from "$(pwd)" "" || true)"
+
+if [ -n "$PUBSPEC_FROM_SCRIPT" ]; then
+    DETECTED_PUBSPEC_PATH="$PUBSPEC_FROM_SCRIPT"
+elif [ -n "$PUBSPEC_FROM_CWD" ]; then
+    DETECTED_PUBSPEC_PATH="$PUBSPEC_FROM_CWD"
+fi
 
 # Flag for whether a pubspec.yaml was detected in current or parent directories
 LOCAL_PUBSPEC_AVAILABLE=false
@@ -200,7 +226,7 @@ echo "🔍 Selected: Local directory scan"
                 ;;
             4)
                 if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
-                    echo "📱 Selected: Current directory"
+                    echo "📱 Selected: Detected project"
                     PROJECT_SOURCE_CHOICE=4
                     return 0
                 else
@@ -759,14 +785,14 @@ case $PROJECT_SOURCE_CHOICE in
             echo "⚠️  Performing full disk search (this may take a while)..."
             while IFS= read -r -d '' project; do
                 FLUTTER_PROJECTS+=("$project")
-            done < <(find / \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
+            done < <(find / \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" -o -path "$SCRIPTS_ROOT" -o -path "$SCRIPTS_ROOT/*" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
         else
             for dir in "${CONFIG_SEARCH_PATHS[@]}"; do
                 if [ -d "$dir" ]; then
                     echo "🔍 Searching in: $dir (depth: $CONFIG_SEARCH_DEPTH)"
                     while IFS= read -r -d '' project; do
                         FLUTTER_PROJECTS+=("$project")
-                    done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
+                    done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" -o -path "$SCRIPTS_ROOT" -o -path "$SCRIPTS_ROOT/*" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
                 fi
             done
         fi
