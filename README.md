@@ -79,6 +79,7 @@ chmod +x scripts/linux-macos/linux_macos_full.sh
 2. **Project Source Selection**: Choose how to find your Flutter project:
    - **Local Scan**: Find existing projects on your machine
    - **GitHub Fetch**: Clone a project from GitHub (with custom save location)
+   - **Detected Project (new)**: If you run the script from a nested folder (e.g. `your_app/scripts/linux-macos`), it will automatically detect the nearest parent project containing `pubspec.yaml` and offer it as the default selection.
 3. **Project Selection**: Choose your Flutter project from discovered/cloned projects
 4. **Repository Selection**: Use the interactive multi-selector:
    - `↑/↓` or `j/k` to navigate
@@ -167,8 +168,8 @@ gh auth login
 ```
 
 **"No Flutter projects found"**
-- Run the script from within a Flutter project directory, or
-- Ensure your Flutter projects are in standard directories:
+- You can now run the script from inside a nested `scripts` directory; it will detect the nearest parent with `pubspec.yaml`.
+- Or ensure your Flutter projects are in standard directories:
   - `~/Development`
   - `~/Projects`
   - `~/dev`

@@ -16,9 +16,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
-# Check for local pubspec.yaml early
+# Ensure TTY is restored for subsequent prompts
+ensure_tty_ready() {
+    stty sane </dev/tty 2>/dev/null || true
+    stty echo icanon </dev/tty 2>/dev/null || true
+}
+
+# Detect nearest pubspec.yaml by searching upward from current directory
+DETECTED_PUBSPEC_PATH=""
+SEARCH_DIR="$(pwd)"
+while true; do
+    if [ -f "$SEARCH_DIR/pubspec.yaml" ]; then
+        DETECTED_PUBSPEC_PATH="$SEARCH_DIR/pubspec.yaml"
+        break
+    fi
+    PARENT_DIR="$(dirname "$SEARCH_DIR")"
+    if [ "$PARENT_DIR" = "$SEARCH_DIR" ]; then
+        break
+    fi
+    SEARCH_DIR="$PARENT_DIR"
+done
+
+# Flag for whether a pubspec.yaml was detected in current or parent directories
 LOCAL_PUBSPEC_AVAILABLE=false
-if [ -f "./pubspec.yaml" ]; then
+if [ -n "$DETECTED_PUBSPEC_PATH" ]; then
     LOCAL_PUBSPEC_AVAILABLE=true
 fi
 
@@ -137,9 +158,11 @@ select_project_source() {
     echo "2. Fetch Flutter project from GitHub repository"
     echo "3. Configure search settings"
     
-    # Always show current directory option if pubspec.yaml exists
+    # Always show detected project option if pubspec.yaml exists in current or parent dirs
     if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
-        echo "4. Use current directory (pubspec.yaml found) [DEFAULT]"
+        local detected_dir="$(dirname "$DETECTED_PUBSPEC_PATH")"
+        local detected_name="$(basename "$detected_dir")"
+        echo "4. Use detected Flutter project: $detected_name [DEFAULT]"
         local default_choice="4"
     else
         local default_choice="1"
@@ -453,12 +476,34 @@ get_relative_path() {
     fi
 }
 
+# Function to detect package name from a repository's pubspec.yaml (via GitHub API)
+get_repo_pubspec_name() {
+    local repo_full_name="$1"
+    local ref_name="$2"
+    local sub_path="${3:-pubspec.yaml}"
+
+    # Fetch raw pubspec.yaml content; ignore errors
+    local content
+    content=$(gh api -H "Accept: application/vnd.github.v3.raw" "repos/$repo_full_name/contents/$sub_path?ref=$ref_name" 2>/dev/null || true)
+
+    if [ -z "$content" ]; then
+        echo ""
+        return 0
+    fi
+
+    # Extract the first 'name:' field
+    local pkg_name
+    pkg_name=$(echo "$content" | sed -n 's/^name:[[:space:]]*//p' | head -1 | tr -d '\r')
+    echo "$pkg_name"
+}
+
 # Function to add package to pubspec.yaml
 add_package_to_pubspec() {
     local PUBSPEC_PATH="$1"
     local PACKAGE_NAME="$2"
     local REPO_URL="$3"
     local REF="$4"
+    local LOCAL_PATH="$5"
 
     echo "📝 Adding $PACKAGE_NAME to pubspec.yaml..."
 
@@ -468,7 +513,7 @@ add_package_to_pubspec() {
     # Check if package already exists
     if grep -q "^[[:space:]]*$PACKAGE_NAME:" "$PUBSPEC_PATH"; then
         echo "⚠️  Package $PACKAGE_NAME already exists in pubspec.yaml"
-        read -p "Replace it? (y/N): " REPLACE
+        read -p "Replace it? (y/N): " REPLACE </dev/tty
         if [[ ! $REPLACE =~ ^[Yy]$ ]]; then
             echo "❌ Cancelled"
             return 1
@@ -482,13 +527,14 @@ add_package_to_pubspec() {
         # Create temporary file with the new dependency
         TEMP_FILE=$(mktemp)
 
-        awk -v pkg="$PACKAGE_NAME" -v url="$REPO_URL" -v ref="$REF" '
+        awk -v pkg="$PACKAGE_NAME" -v url="$REPO_URL" -v ref="$REF" -v local_path="$LOCAL_PATH" '
         /^dependencies:/ {
             print $0
             print "  " pkg ":"
             print "    git:"
             print "      url: " url
             if (ref != "") print "      ref: " ref
+            if (local_path != "") print "      path: " local_path
             in_deps = 1
             next
         }
@@ -508,6 +554,9 @@ add_package_to_pubspec() {
         echo "      url: $REPO_URL" >> "$PUBSPEC_PATH"
         if [ -n "$REF" ]; then
             echo "      ref: $REF" >> "$PUBSPEC_PATH"
+        fi
+        if [ -n "$LOCAL_PATH" ]; then
+            echo "      path: $LOCAL_PATH" >> "$PUBSPEC_PATH"
         fi
     fi
 
@@ -710,14 +759,14 @@ case $PROJECT_SOURCE_CHOICE in
             echo "⚠️  Performing full disk search (this may take a while)..."
             while IFS= read -r -d '' project; do
                 FLUTTER_PROJECTS+=("$project")
-            done < <(find / -name "pubspec.yaml" -print0 2>/dev/null)
+            done < <(find / \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
         else
             for dir in "${CONFIG_SEARCH_PATHS[@]}"; do
                 if [ -d "$dir" ]; then
                     echo "🔍 Searching in: $dir (depth: $CONFIG_SEARCH_DEPTH)"
                     while IFS= read -r -d '' project; do
                         FLUTTER_PROJECTS+=("$project")
-                    done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" -name "pubspec.yaml" -print0 2>/dev/null)
+                    done < <(find "$dir" -maxdepth "$CONFIG_SEARCH_DEPTH" \( -type d \( -name ".git" -o -name ".dart_tool" -o -name "build" -o -name "node_modules" -o -name "Pods" -o -name ".Trash" \) -prune \) -o -name "pubspec.yaml" -print0 2>/dev/null)
                 fi
             done
         fi
@@ -747,10 +796,10 @@ case $PROJECT_SOURCE_CHOICE in
         fi
         ;;
     4)
-        # Current directory
-        SELECTED_PUBSPEC="./pubspec.yaml"
-        SELECTED_PROJECT=$(basename "$(pwd)")
-        echo "📱 Using current directory project: $SELECTED_PROJECT"
+        # Detected project (current or parent directory)
+        SELECTED_PUBSPEC="$DETECTED_PUBSPEC_PATH"
+        SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+        echo "📱 Using project: $SELECTED_PROJECT"
         ;;
     *)
         echo "❌ Invalid source selection: $PROJECT_SOURCE_CHOICE"
@@ -838,6 +887,9 @@ clear
 SELECTED_INDICES=()
 multiselect "Select repositories (SPACE to select, ENTER to confirm):" REPO_OPTIONS SELECTED_INDICES false true
 
+# Restore terminal to cooked mode before next prompts
+ensure_tty_ready
+
 if [ ${#SELECTED_INDICES[@]} -eq 0 ]; then
     echo "❌ No repositories selected"
     exit 1
@@ -865,14 +917,6 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     REPO_NAME=$(echo "$REPO_FULL_NAME" | cut -d'/' -f2)
     REPO_URL="https://github.com/$REPO_FULL_NAME.git"
 
-    # Ask for package name with default
-    echo ""
-    read -p "Package name for $REPO_FULL_NAME (default: $REPO_NAME): " PACKAGE_NAME
-    PACKAGE_NAME=${PACKAGE_NAME:-$REPO_NAME}
-
-    # Sanitize package name (replace hyphens with underscores, etc.)
-    PACKAGE_NAME=$(echo "$PACKAGE_NAME" | sed 's/-/_/g' | sed 's/[^a-zA-Z0-9_]//g')
-
     # Get branches and tags
     echo ""
     echo "🏷️  Available references for $REPO_FULL_NAME:"
@@ -883,13 +927,39 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     gh api "repos/$REPO_FULL_NAME/tags" --jq '.[].name' 2>/dev/null | head -3 | sed 's/^/  /' || echo "  (No tags found)"
 
     echo ""
-    read -p "Specify branch/tag (default: main): " REF
+    read -p "Specify branch/tag (default: main): " REF </dev/tty
     REF=${REF:-main}
+
+    # Optional: ask for monorepo subfolder path (if pubspec lives in a subdirectory)
+    echo ""
+    read -p "If this is a monorepo, enter package subfolder path (empty for root): " SUB_PATH </dev/tty
+    SUB_PATH=${SUB_PATH:-}
+
+    # Auto-detect default package name from repo pubspec on selected ref and path
+    DEFAULT_PACKAGE_NAME=""
+    if [ -n "$SUB_PATH" ]; then
+        SUB_PUBSPEC_PATH="${SUB_PATH%/}/pubspec.yaml"
+        DEFAULT_PACKAGE_NAME=$(get_repo_pubspec_name "$REPO_FULL_NAME" "$REF" "$SUB_PUBSPEC_PATH")
+    fi
+    if [ -z "$DEFAULT_PACKAGE_NAME" ]; then
+        DEFAULT_PACKAGE_NAME=$(get_repo_pubspec_name "$REPO_FULL_NAME" "$REF")
+    fi
+    if [ -z "$DEFAULT_PACKAGE_NAME" ]; then
+        DEFAULT_PACKAGE_NAME="$REPO_NAME"
+    fi
+
+    # Ask for package name with detected default
+    echo ""
+    read -p "Package name for $REPO_FULL_NAME (default: $DEFAULT_PACKAGE_NAME): " PACKAGE_NAME </dev/tty
+    PACKAGE_NAME=${PACKAGE_NAME:-$DEFAULT_PACKAGE_NAME}
+
+    # Sanitize package name (replace hyphens with underscores, etc.)
+    PACKAGE_NAME=$(echo "$PACKAGE_NAME" | sed 's/-/_/g' | sed 's/[^a-zA-Z0-9_]//g')
 
     # Add to pubspec
     echo ""
     echo "📝 Adding $PACKAGE_NAME to pubspec.yaml..."
-    if add_package_to_pubspec "$SELECTED_PUBSPEC" "$PACKAGE_NAME" "$REPO_URL" "$REF"; then
+    if add_package_to_pubspec "$SELECTED_PUBSPEC" "$PACKAGE_NAME" "$REPO_URL" "$REF" "$SUB_PATH"; then
         ADDED_PACKAGES+=("$PACKAGE_NAME ($REPO_FULL_NAME)")
         echo "✅ Successfully added $PACKAGE_NAME"
     else
@@ -927,7 +997,7 @@ echo "  flutter pub get"
 # Ask if they want to run pub get automatically
 if [ "$(dirname "$SELECTED_PUBSPEC")" = "." ]; then
     echo ""
-    read -p "Run 'flutter pub get' now? (y/N): " RUN_PUB_GET
+    read -p "Run 'flutter pub get' now? (y/N): " RUN_PUB_GET </dev/tty
     if [[ $RUN_PUB_GET =~ ^[Yy]$ ]]; then
         echo "📦 Running flutter pub get..."
         flutter pub get
