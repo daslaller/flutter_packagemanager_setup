@@ -5,14 +5,14 @@
 
 set -e
 
+# Ensure terminal is properly restored on exit
+trap 'stty echo icanon </dev/tty 2>/dev/null || true' EXIT
+
 echo "📦 Flutter Package Manager"
 echo "=========================="
 
 # Source shared functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Source shared functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Source shared functions
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
 
@@ -102,12 +102,12 @@ configure_search_settings() {
     echo ""
 
     while true; do
-        read -p "Enter your choice (1-6): " CONFIG_CHOICE
+        read -p "Enter your choice (1-6): " CONFIG_CHOICE </dev/tty
 
         case "$CONFIG_CHOICE" in
             1)
                 echo ""
-                read -p "Enter new search path: " NEW_PATH
+                read -p "Enter new search path: " NEW_PATH </dev/tty
                 if [ -n "$NEW_PATH" ] && [ -d "$NEW_PATH" ]; then
                     CONFIG_SEARCH_PATHS+=("$NEW_PATH")
                     echo "✅ Added: $NEW_PATH"
@@ -123,7 +123,7 @@ configure_search_settings() {
                     for i in "${!CONFIG_SEARCH_PATHS[@]}"; do
                         echo "  $((i+1)). ${CONFIG_SEARCH_PATHS[$i]}"
                     done
-                    read -p "Enter number: " REMOVE_NUM
+                    read -p "Enter number: " REMOVE_NUM </dev/tty
                     if [[ "$REMOVE_NUM" =~ ^[0-9]+$ ]] && [ "$REMOVE_NUM" -ge 1 ] && [ "$REMOVE_NUM" -le ${#CONFIG_SEARCH_PATHS[@]} ]; then
                         REMOVED_PATH="${CONFIG_SEARCH_PATHS[$((REMOVE_NUM-1))]}"
                         unset CONFIG_SEARCH_PATHS[$((REMOVE_NUM-1))]
@@ -139,7 +139,7 @@ configure_search_settings() {
                 ;;
             3)
                 echo ""
-                read -p "Enter search depth (current: $CONFIG_SEARCH_DEPTH): " NEW_DEPTH
+                read -p "Enter search depth (current: $CONFIG_SEARCH_DEPTH): " NEW_DEPTH </dev/tty
                 if [[ "$NEW_DEPTH" =~ ^[0-9]+$ ]] && [ "$NEW_DEPTH" -gt 0 ]; then
                     CONFIG_SEARCH_DEPTH="$NEW_DEPTH"
                     echo "✅ Search depth set to: $CONFIG_SEARCH_DEPTH"
@@ -275,7 +275,7 @@ get_save_location() {
     echo ""
 
     while true; do
-        read -p "Enter your choice (default: 1): " LOCATION_CHOICE
+        read -p "Enter your choice (default: 1): " LOCATION_CHOICE </dev/tty
 
         # Default to option 1 (current directory) if empty
         if [ -z "$LOCATION_CHOICE" ]; then
@@ -286,7 +286,7 @@ get_save_location() {
             SELECTED_LOCATION="${DEFAULT_LOCATIONS[$((LOCATION_CHOICE-1))]}"
             break
         elif [ "$LOCATION_CHOICE" -eq $((${#DEFAULT_LOCATIONS[@]}+1)) ]; then
-            read -p "Enter custom path: " CUSTOM_PATH
+            read -p "Enter custom path: " CUSTOM_PATH </dev/tty
             if [ -n "$CUSTOM_PATH" ]; then
                 SELECTED_LOCATION="$CUSTOM_PATH"
                 break
@@ -323,7 +323,7 @@ fetch_github_project() {
     echo ""
 
     while true; do
-        read -p "Choose option (1-2): " GITHUB_OPTION
+        read -p "Choose option (1-2): " GITHUB_OPTION </dev/tty
 
         case "$GITHUB_OPTION" in
             1)
@@ -346,7 +346,7 @@ fetch_by_url() {
     local SAVE_LOCATION="$1"
 
     echo ""
-    read -p "Enter GitHub repository URL or user/repo format: " REPO_INPUT
+    read -p "Enter GitHub repository URL or user/repo format: " REPO_INPUT </dev/tty
 
     if [ -z "$REPO_INPUT" ]; then
         echo "❌ Repository URL cannot be empty"
@@ -412,6 +412,7 @@ fetch_from_user_repos() {
     # Use multiselect function in single selection mode
     local SELECTED_INDICES=()
     multiselect "Select repository to clone:" REPO_OPTIONS SELECTED_INDICES true
+    ensure_tty_ready
 
     if [ ${#SELECTED_INDICES[@]} -eq 0 ]; then
         echo "❌ No repository selected"
@@ -502,6 +503,75 @@ get_relative_path() {
     fi
 }
 
+# Extract dependency block for a package from pubspec.yaml
+get_dependency_block() {
+    local pubspec_path="$1"
+    local pkg="$2"
+    awk -v pkg="$pkg" '
+    BEGIN { in_pkg=0; indent_pkg=-1 }
+    {
+        if (in_pkg) {
+            if ($0 ~ /[^ \t]/) {
+                line_indent = match($0, /[^ \t]/) - 1
+                if (line_indent <= indent_pkg) { exit }
+            }
+            print
+            next
+        }
+        if ($0 ~ "^[[:space:]]*" pkg ":[[:space:]]*$") {
+            in_pkg=1
+            indent_pkg = match($0, /[^ \t]/) - 1
+            print
+        }
+    }
+    ' "$pubspec_path"
+}
+
+# Remove dependency block for a package from pubspec.yaml
+remove_dependency_block() {
+    local pubspec_path="$1"
+    local pkg="$2"
+    awk -v pkg="$pkg" '
+    BEGIN { in_pkg=0; indent_pkg=-1 }
+    {
+        if (in_pkg) {
+            if ($0 ~ /[^ \t]/) {
+                line_indent = match($0, /[^ \t]/) - 1
+                if (line_indent <= indent_pkg) { in_pkg=0 }
+            }
+            if (!in_pkg) { print }
+            next
+        }
+        if ($0 ~ "^[[:space:]]*" pkg ":[[:space:]]*$") {
+            in_pkg=1
+            indent_pkg = match($0, /[^ \t]/) - 1
+            next
+        }
+        print
+    }
+    ' "$pubspec_path" > "$pubspec_path.tmp" && mv "$pubspec_path.tmp" "$pubspec_path"
+}
+
+# Check if existing dependency block matches the desired values
+dependency_block_matches() {
+    local block="$1"
+    local url="$2"
+    local ref="$3"
+    local path="$4"
+
+    echo "$block" | grep -Fq "url: $url" || return 1
+    if [ -n "$ref" ]; then
+        echo "$block" | grep -Fq "ref: $ref" || return 1
+    else
+        # If ref not provided, ensure no ref present (optional: treat as match even if present)
+        :
+    fi
+    if [ -n "$path" ]; then
+        echo "$block" | grep -Fq "path: $path" || return 1
+    fi
+    return 0
+}
+
 # Function to detect package name from a repository's pubspec.yaml (via GitHub API)
 get_repo_pubspec_name() {
     local repo_full_name="$1"
@@ -536,16 +606,22 @@ add_package_to_pubspec() {
     # Backup original file
     cp "$PUBSPEC_PATH" "$PUBSPEC_PATH.backup"
 
-    # Check if package already exists
+    # Check if package already exists and compare contents
     if grep -q "^[[:space:]]*$PACKAGE_NAME:" "$PUBSPEC_PATH"; then
-        echo "⚠️  Package $PACKAGE_NAME already exists in pubspec.yaml"
-        read -p "Replace it? (y/N): " REPLACE </dev/tty
-        if [[ ! $REPLACE =~ ^[Yy]$ ]]; then
-            echo "❌ Cancelled"
+        local existing_block
+        existing_block="$(get_dependency_block "$PUBSPEC_PATH" "$PACKAGE_NAME")"
+        if dependency_block_matches "$existing_block" "$REPO_URL" "$REF" "$LOCAL_PATH"; then
+            echo "ℹ️  Package $PACKAGE_NAME is already up-to-date"
+            return 0
+        fi
+        echo "⚠️  Package $PACKAGE_NAME already exists in pubspec.yaml with different settings"
+        read -p "Replace it with the new url/ref/path? (Y/n): " REPLACE </dev/tty
+        if [[ "$REPLACE" =~ ^[Nn]$ ]]; then
+            echo "❌ Skipped updating $PACKAGE_NAME"
             return 1
         fi
-        # Remove existing entry - use cross-platform sed
-        cross_platform_sed "/^[[:space:]]*$PACKAGE_NAME:/d" "$PUBSPEC_PATH"
+        # Remove full existing dependency block safely
+        remove_dependency_block "$PUBSPEC_PATH" "$PACKAGE_NAME"
     fi
 
     # Find the dependencies section and add the package
@@ -587,6 +663,345 @@ add_package_to_pubspec() {
     fi
 
     echo "✅ Added $PACKAGE_NAME to dependencies"
+}
+
+# Function to analyze and suggest exported functions from a package
+analyze_package_exports() {
+    local repo_full_name="$1"
+    local package_name="$2"
+    local ref="$3"
+    
+    echo ""
+    echo "🔍 Analyzing exports in $package_name..."
+    
+    # Create temp directory for analysis
+    local temp_dir=$(mktemp -d)
+    local clone_success=false
+    
+    # Clone repository for analysis
+    if git clone --depth 1 --branch "$ref" "https://github.com/$repo_full_name.git" "$temp_dir/$package_name" >/dev/null 2>&1; then
+        clone_success=true
+    elif git clone --depth 1 "https://github.com/$repo_full_name.git" "$temp_dir/$package_name" >/dev/null 2>&1; then
+        clone_success=true
+        echo "⚠️  Using default branch (ref '$ref' not found)"
+    fi
+    
+    if [ "$clone_success" = true ]; then
+        local lib_dir="$temp_dir/$package_name/lib"
+        
+        if [ -d "$lib_dir" ]; then
+            echo "📋 Discovered exports:"
+            
+            # Find main library file
+            local main_lib="$lib_dir/$package_name.dart"
+            if [ ! -f "$main_lib" ]; then
+                main_lib="$lib_dir/main.dart"
+            fi
+            
+            # Extract exports from main library and other dart files
+            local exports_found=false
+            
+            for dart_file in "$lib_dir"/*.dart "$main_lib"; do
+                if [ -f "$dart_file" ]; then
+                    # Extract public classes, functions, widgets, enums
+                    local exports=$(grep -E "^(class|abstract class|mixin|enum|typedef|Widget.*extends)" "$dart_file" 2>/dev/null | \
+                                   grep -v "^[[:space:]]*//\|^[[:space:]]*\*" | \
+                                   sed 's/^[[:space:]]*//' | \
+                                   head -5)
+                    
+                    if [ -n "$exports" ]; then
+                        exports_found=true
+                        echo ""
+                        echo "  📄 From $(basename "$dart_file"):"
+                        echo "$exports" | sed 's/^/    ✦ /'
+                    fi
+                fi
+            done
+            
+            if [ "$exports_found" = true ]; then
+                echo ""
+                echo "💡 Usage suggestions:"
+                echo "  import 'package:$package_name/$package_name.dart';"
+                echo ""
+                echo "  // Example instantiation patterns:"
+                
+                # Generate usage examples based on discovered classes
+                echo "  // Based on discovered classes:"
+                local examples_generated=false
+                
+                # Process the exports we already found and generate examples
+                local temp_exports=$(mktemp)
+                
+                # Collect all exports from all dart files for processing
+                for dart_file in "$lib_dir"/*.dart "$main_lib"; do
+                    if [ -f "$dart_file" ]; then
+                        grep -E "^class [A-Za-z0-9_]+" "$dart_file" 2>/dev/null >> "$temp_exports" || true
+                    fi
+                done
+                
+                # Process the collected exports
+                if [ -s "$temp_exports" ]; then
+                    while IFS= read -r class_line; do
+                        if [ -n "$class_line" ]; then
+                            # Extract class name
+                            local class_name=$(echo "$class_line" | sed -E 's/class ([A-Za-z0-9_]+).*/\1/' 2>/dev/null)
+                            
+                            if [ -n "$class_name" ]; then
+                                # Determine type and generate appropriate example
+                                if [[ "$class_line" =~ Widget ]]; then
+                                    echo "  $class_name(), // Widget"
+                                    examples_generated=true
+                                elif [[ "$class_line" =~ Model ]]; then
+                                    echo "  final model = $class_name(); // Model class"
+                                    examples_generated=true
+                                elif [[ "$class_line" =~ Service ]]; then
+                                    echo "  final service = $class_name(); // Service class"
+                                    examples_generated=true
+                                elif [[ "$class_line" =~ Controller|Manager ]]; then
+                                    echo "  final controller = $class_name(); // Controller"
+                                    examples_generated=true
+                                else
+                                    # Generic class
+                                    local var_name=$(echo "$class_name" | sed 's/\([A-Z]\)/_\1/g' | sed 's/^_//' | tr '[:upper:]' '[:lower:]')
+                                    echo "  final $var_name = $class_name(); // Class"
+                                    examples_generated=true
+                                fi
+                            fi
+                        fi
+                    done < "$temp_exports"
+                fi
+                
+                # Cleanup temp file
+                rm -f "$temp_exports" 2>/dev/null
+                
+                if [ "$examples_generated" = false ]; then
+                    echo "  // No specific usage patterns detected"
+                    echo "  // Check the package documentation for usage details"
+                fi
+                
+                echo ""
+                echo "📖 **Next steps:**"
+                echo "  1. Run 'flutter pub get' to fetch the dependency"
+                echo "  2. Import the package in your Dart files"
+                echo "  3. Explore the package documentation for detailed usage"
+                
+                echo ""
+            else
+                echo "  ℹ️  No public exports detected (might be a utility package)"
+            fi
+        else
+            echo "  ℹ️  No lib directory found - not a standard Dart/Flutter package"
+        fi
+    else
+        echo "  ⚠️  Could not analyze package (clone failed)"
+    fi
+    
+    # Cleanup
+    rm -rf "$temp_dir" 2>/dev/null
+}
+
+# Function to auto-discover monorepo structure
+discover_monorepo_structure() {
+    local repo_full_name="$1"
+    local ref="$2"
+    
+    echo ""
+    echo "🔍 Auto-discovering monorepo structure for $repo_full_name..."
+    
+    # Create temp directory for analysis
+    local temp_dir=$(mktemp -d)
+    local clone_success=false
+    
+    # Clone repository for analysis
+    if git clone --depth 1 --branch "$ref" "https://github.com/$repo_full_name.git" "$temp_dir/analysis" >/dev/null 2>&1; then
+        clone_success=true
+    elif git clone --depth 1 "https://github.com/$repo_full_name.git" "$temp_dir/analysis" >/dev/null 2>&1; then
+        clone_success=true
+    fi
+    
+    if [ "$clone_success" = true ]; then
+        local repo_dir="$temp_dir/analysis"
+        
+        # Find all pubspec.yaml files to detect monorepo structure
+        local pubspec_files=()
+        while IFS= read -r -d '' pubspec; do
+            # Get relative path from repo root
+            local rel_path="${pubspec#$repo_dir/}"
+            rel_path="${rel_path%/pubspec.yaml}"
+            [ -n "$rel_path" ] && pubspec_files+=("$rel_path") || pubspec_files+=(".")
+        done < <(find "$repo_dir" -name "pubspec.yaml" -print0 2>/dev/null)
+        
+        # Analyze structure
+        if [ ${#pubspec_files[@]} -gt 1 ]; then
+            echo "🏗️  **MONOREPO DETECTED!**"
+            echo ""
+            echo "📊 Found ${#pubspec_files[@]} packages:"
+            
+            # Categorize packages
+            local root_packages=()
+            local nested_packages=()
+            local app_packages=()
+            local lib_packages=()
+            
+            for pkg_path in "${pubspec_files[@]}"; do
+                if [ "$pkg_path" = "." ]; then
+                    root_packages+=("ROOT")
+                else
+                    # Analyze package type
+                    local pubspec_file="$repo_dir/$pkg_path/pubspec.yaml"
+                    local is_app=false
+                    local is_lib=false
+                    
+                    if [ -f "$pubspec_file" ]; then
+                        # Check if it's an app (has flutter section with dependencies or main.dart)
+                        if [ -f "$repo_dir/$pkg_path/lib/main.dart" ] || grep -q "flutter:" "$pubspec_file"; then
+                            if [ -f "$repo_dir/$pkg_path/lib/main.dart" ]; then
+                                is_app=true
+                                app_packages+=("$pkg_path")
+                            else
+                                is_lib=true
+                                lib_packages+=("$pkg_path")
+                            fi
+                        else
+                            nested_packages+=("$pkg_path")
+                        fi
+                    else
+                        nested_packages+=("$pkg_path")
+                    fi
+                fi
+            done
+            
+            # Display findings
+            if [ ${#root_packages[@]} -gt 0 ]; then
+                echo "  🏠 Root package: ${root_packages[0]}"
+            fi
+            
+            if [ ${#app_packages[@]} -gt 0 ]; then
+                echo "  📱 Flutter apps:"
+                for app in "${app_packages[@]}"; do
+                    echo "    • $app"
+                done
+            fi
+            
+            if [ ${#lib_packages[@]} -gt 0 ]; then
+                echo "  📚 Flutter libraries:"
+                for lib in "${lib_packages[@]}"; do
+                    echo "    • $lib"
+                done
+            fi
+            
+            if [ ${#nested_packages[@]} -gt 0 ]; then
+                echo "  📦 Other packages:"
+                for pkg in "${nested_packages[@]}"; do
+                    echo "    • $pkg"
+                done
+            fi
+            
+            echo ""
+            echo "💡 **Monorepo handling suggestions:**"
+            
+            # Smart suggestions based on discovered structure
+            if [ ${#lib_packages[@]} -gt 0 ]; then
+                echo "  🎯 **Recommended**: Use library packages as they're designed for reuse"
+                for lib in "${lib_packages[@]}"; do
+                    echo "     → $lib (library package)"
+                done
+            fi
+            
+            if [ ${#app_packages[@]} -gt 0 ] && [ ${#lib_packages[@]} -eq 0 ]; then
+                echo "  📱 **App packages found**: These contain full applications"
+                for app in "${app_packages[@]}"; do
+                    echo "     → $app (Flutter app)"
+                done
+                echo "     ⚠️  Consider extracting reusable components into libraries"
+            fi
+            
+            if [ ${#root_packages[@]} -gt 0 ] && [ ${#nested_packages[@]} -gt 0 ]; then
+                echo "  🏠 **Root package available**: Contains the main package"
+                echo "     → Use ROOT for the main package functionality"
+            fi
+            
+            echo ""
+            echo "🤔 **How would you like to handle this monorepo?**"
+            echo "1. 🎯 Use recommended library package (auto-select best option)"
+            echo "2. 📋 Let me choose specific package from list"
+            echo "3. 🏠 Use root package (if available)"
+            echo "4. ✋ I'll specify the path manually"
+            echo ""
+            
+            local suggested_path=""
+            if [ ${#lib_packages[@]} -gt 0 ]; then
+                suggested_path="${lib_packages[0]}"
+                echo "💡 Auto-suggestion: $suggested_path (first library package)"
+            elif [ ${#root_packages[@]} -gt 0 ]; then
+                suggested_path="."
+                echo "💡 Auto-suggestion: ROOT package"
+            else
+                suggested_path="${pubspec_files[0]}"
+                echo "💡 Auto-suggestion: $suggested_path (first found package)"
+            fi
+            
+            echo ""
+            echo "Choose option (1-4, default: 1): "
+            read MONOREPO_CHOICE </dev/tty
+            MONOREPO_CHOICE=${MONOREPO_CHOICE:-1}
+            
+            case "$MONOREPO_CHOICE" in
+                1)
+                    DISCOVERED_SUB_PATH="$suggested_path"
+                    echo "✅ Using suggested path: $DISCOVERED_SUB_PATH"
+                    ;;
+                2)
+                    echo ""
+                    echo "📋 Available packages:"
+                    for i in "${!pubspec_files[@]}"; do
+                        local display_path="${pubspec_files[$i]}"
+                        [ "$display_path" = "." ] && display_path="ROOT"
+                        echo "  $((i+1)). $display_path"
+                    done
+                    echo ""
+                    echo "Enter package number: "
+                    read PKG_NUM </dev/tty
+                    
+                    if [[ "$PKG_NUM" =~ ^[0-9]+$ ]] && [ "$PKG_NUM" -ge 1 ] && [ "$PKG_NUM" -le ${#pubspec_files[@]} ]; then
+                        DISCOVERED_SUB_PATH="${pubspec_files[$((PKG_NUM-1))]}"
+                        echo "✅ Selected: $DISCOVERED_SUB_PATH"
+                    else
+                        echo "❌ Invalid selection, using suggested path"
+                        DISCOVERED_SUB_PATH="$suggested_path"
+                    fi
+                    ;;
+                3)
+                    DISCOVERED_SUB_PATH="."
+                    echo "✅ Using root package"
+                    ;;
+                4)
+                    echo ""
+                    echo "Enter custom package path: "
+                    read CUSTOM_SUB_PATH </dev/tty
+                    DISCOVERED_SUB_PATH="${CUSTOM_SUB_PATH:-$suggested_path}"
+                    echo "✅ Using custom path: $DISCOVERED_SUB_PATH"
+                    ;;
+                *)
+                    echo "❌ Invalid choice, using suggested path"
+                    DISCOVERED_SUB_PATH="$suggested_path"
+                    ;;
+            esac
+            
+            # Store the discovered path for use in package addition
+            MONOREPO_SUB_PATH="$DISCOVERED_SUB_PATH"
+            
+        else
+            echo "📦 Single package repository detected"
+            MONOREPO_SUB_PATH=""
+        fi
+    else
+        echo "⚠️  Could not analyze repository structure"
+        MONOREPO_SUB_PATH=""
+    fi
+    
+    # Cleanup
+    rm -rf "$temp_dir" 2>/dev/null
 }
 
 # Function to install missing dependencies
@@ -738,7 +1153,7 @@ authenticate_github() {
 if ! gh auth status &>/dev/null; then
     echo "❌ Not authenticated with GitHub."
     echo ""
-    read -p "🚀 Would you like to authenticate now? (Y/n): " auth_choice
+    read -p "🚀 Would you like to authenticate now? (Y/n): " auth_choice </dev/tty
 
     if [[ "$auth_choice" =~ ^[Nn]$ ]]; then
         echo "ℹ️  You can authenticate later with: gh auth login"
@@ -947,19 +1362,51 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     echo ""
     echo "🏷️  Available references for $REPO_FULL_NAME:"
     echo "Branches:"
-    gh api "repos/$REPO_FULL_NAME/branches" --jq '.[].name' 2>/dev/null | head -5 | sed 's/^/  /' || echo "  (Could not fetch branches)"
+    BRANCHES_OUTPUT=$(gh api "repos/$REPO_FULL_NAME/branches" --jq '.[].name' 2>/dev/null || true)
+    if [ -n "$BRANCHES_OUTPUT" ]; then
+        echo "$BRANCHES_OUTPUT" | head -10 | sed 's/^/  /'
+    else
+        echo "  (No branches found or insufficient permissions)"
+    fi
 
     echo "Tags:"
-    gh api "repos/$REPO_FULL_NAME/tags" --jq '.[].name' 2>/dev/null | head -3 | sed 's/^/  /' || echo "  (No tags found)"
+    TAGS_OUTPUT=$(gh api "repos/$REPO_FULL_NAME/tags" --jq '.[].name' 2>/dev/null || true)
+    if [ -n "$TAGS_OUTPUT" ]; then
+        echo "$TAGS_OUTPUT" | head -10 | sed 's/^/  /'
+    else
+        echo "  (No tags found)"
+    fi
 
+    # Ensure TTY is ready for input prompts
+    ensure_tty_ready
+    
     echo ""
-    read -p "Specify branch/tag (default: main): " REF </dev/tty
+    echo "Specify branch/tag (default: main): "
+    read REF </dev/tty
     REF=${REF:-main}
 
-    # Optional: ask for monorepo subfolder path (if pubspec lives in a subdirectory)
-    echo ""
-    read -p "If this is a monorepo, enter package subfolder path (empty for root): " SUB_PATH </dev/tty
-    SUB_PATH=${SUB_PATH:-}
+    # Auto-discover monorepo structure
+    discover_monorepo_structure "$REPO_FULL_NAME" "$REF"
+    
+    # Use discovered path or ask for manual input
+    if [ -n "$MONOREPO_SUB_PATH" ] && [ "$MONOREPO_SUB_PATH" != "." ]; then
+        SUB_PATH="$MONOREPO_SUB_PATH"
+        echo ""
+        echo "🎯 Using auto-discovered monorepo path: $SUB_PATH"
+        echo ""
+        echo "Override with custom path? (leave empty to use discovered path): "
+        read CUSTOM_SUB_PATH </dev/tty
+        if [ -n "$CUSTOM_SUB_PATH" ]; then
+            SUB_PATH="$CUSTOM_SUB_PATH"
+            echo "✅ Using custom override: $SUB_PATH"
+        fi
+    else
+        # Fallback to manual input if auto-discovery didn't work or found single package
+        echo ""
+        echo "If this is a monorepo, enter package subfolder path (empty for root): "
+        read SUB_PATH </dev/tty
+        SUB_PATH=${SUB_PATH:-}
+    fi
 
     # Auto-detect default package name from repo pubspec on selected ref and path
     DEFAULT_PACKAGE_NAME=""
@@ -975,8 +1422,10 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     fi
 
     # Ask for package name with detected default
+    ensure_tty_ready
     echo ""
-    read -p "Package name for $REPO_FULL_NAME (default: $DEFAULT_PACKAGE_NAME): " PACKAGE_NAME </dev/tty
+    echo "Package name for $REPO_FULL_NAME (default: $DEFAULT_PACKAGE_NAME): "
+    read PACKAGE_NAME </dev/tty
     PACKAGE_NAME=${PACKAGE_NAME:-$DEFAULT_PACKAGE_NAME}
 
     # Sanitize package name (replace hyphens with underscores, etc.)
@@ -988,6 +1437,14 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     if add_package_to_pubspec "$SELECTED_PUBSPEC" "$PACKAGE_NAME" "$REPO_URL" "$REF" "$SUB_PATH"; then
         ADDED_PACKAGES+=("$PACKAGE_NAME ($REPO_FULL_NAME)")
         echo "✅ Successfully added $PACKAGE_NAME"
+        
+        # Optional: Analyze exports from the added package
+        echo ""
+        echo "🔬 Analyze available functions in this package? (y/N): "
+        read ANALYZE_EXPORTS </dev/tty
+        if [[ $ANALYZE_EXPORTS =~ ^[Yy]$ ]]; then
+            analyze_package_exports "$REPO_FULL_NAME" "$PACKAGE_NAME" "$REF"
+        fi
     else
         FAILED_PACKAGES+=("$PACKAGE_NAME ($REPO_FULL_NAME)")
         echo "❌ Failed to add $PACKAGE_NAME"
