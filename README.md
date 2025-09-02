@@ -4,19 +4,39 @@ A cross-platform tool that transforms GitHub into your private package manager f
 
 ## ⚡ Quick Start (One-Line Install)
 
-### 🚀 Install & Run Immediately
+### 🐧 **Linux/macOS**
+
+#### 🚀 Install & Run Immediately
 ```bash
 curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash
 ```
 
-### 🏃 Run Directly (No Installation) 
+#### 🏃 Run Directly (No Installation) 
 ```bash
 curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/run.sh | bash
 ```
 
-### 📦 Install Only (Run Later)
+#### 📦 Install Only (Run Later)
 ```bash
 curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash -s -- --no-run
+flutter-pm  # Run anytime!
+```
+
+### 🪟 **Windows**
+
+#### 🚀 Install & Run Immediately
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.ps1 | iex
+```
+
+#### 🏃 Run Directly (No Installation)
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/run.ps1 | iex
+```
+
+#### 📦 Install Only (Run Later)
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.ps1 | iex -NoRun
 flutter-pm  # Run anytime!
 ```
 
