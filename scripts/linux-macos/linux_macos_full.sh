@@ -665,6 +665,102 @@ add_package_to_pubspec() {
     echo "✅ Added $PACKAGE_NAME to dependencies"
 }
 
+# Function to validate and fix package name mismatches
+validate_package_name() {
+    local pubspec_path="$1"
+    local expected_dir_name="$2"
+    
+    if [ ! -f "$pubspec_path" ]; then
+        return 0
+    fi
+    
+    # Extract current name from pubspec.yaml
+    local current_name=$(grep "^name:" "$pubspec_path" | sed 's/name:[[:space:]]*//' | tr -d '"' | head -1)
+    
+    if [ -n "$current_name" ] && [ -n "$expected_dir_name" ]; then
+        # Check if names match (allowing for reasonable variations)
+        if [ "$current_name" != "$expected_dir_name" ]; then
+            echo ""
+            echo "⚠️  **Package name mismatch detected:**"
+            echo "   Directory name: $expected_dir_name"
+            echo "   pubspec.yaml name: $current_name"
+            echo ""
+            echo "💡 This can cause 'pub get' failures. How would you like to fix this?"
+            echo "1. 🔧 Update pubspec.yaml name to match directory ($expected_dir_name)"
+            echo "2. 📁 Keep current pubspec name ($current_name)"
+            echo "3. ✏️  Enter a new name manually"
+            echo ""
+            
+            echo "Choose option (1-3, default: 1): "
+            read NAME_FIX_CHOICE </dev/tty
+            NAME_FIX_CHOICE=${NAME_FIX_CHOICE:-1}
+            
+            case "$NAME_FIX_CHOICE" in
+                1)
+                    # Update pubspec to match directory
+                    cross_platform_sed "s/^name:.*/name: $expected_dir_name/" "$pubspec_path"
+                    echo "✅ Updated pubspec.yaml name to: $expected_dir_name"
+                    ;;
+                2)
+                    echo "✅ Keeping current name: $current_name"
+                    echo "⚠️  Note: You may need to rename the directory to '$current_name' to avoid issues"
+                    ;;
+                3)
+                    echo ""
+                    echo "Enter new package name (lowercase, underscores only): "
+                    read NEW_NAME </dev/tty
+                    
+                    if [ -n "$NEW_NAME" ]; then
+                        # Sanitize the name
+                        NEW_NAME=$(echo "$NEW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_]/_/g' | sed 's/__*/_/g')
+                        cross_platform_sed "s/^name:.*/name: $NEW_NAME/" "$pubspec_path"
+                        echo "✅ Updated pubspec.yaml name to: $NEW_NAME"
+                    else
+                        echo "❌ Empty name, keeping original: $current_name"
+                    fi
+                    ;;
+                *)
+                    echo "❌ Invalid choice, keeping original name: $current_name"
+                    ;;
+            esac
+            
+            echo ""
+        fi
+    fi
+}
+
+# Function to validate entire project structure
+validate_project_structure() {
+    local project_dir="$1"
+    local project_name=$(basename "$project_dir")
+    local pubspec_path="$project_dir/pubspec.yaml"
+    
+    echo "🔍 Validating project structure..."
+    
+    # Validate package name
+    validate_package_name "$pubspec_path" "$project_name"
+    
+    # Check for common issues
+    if [ -f "$pubspec_path" ]; then
+        # Check for duplicate dependencies
+        local duplicates=$(awk '/^dependencies:/,/^[^[:space:]]/ {
+            if (/^[[:space:]]+[^[:space:]]+:/) {
+                gsub(/^[[:space:]]+/, "")
+                gsub(/:.*/, "")
+                print
+            }
+        }' "$pubspec_path" | sort | uniq -d)
+        
+        if [ -n "$duplicates" ]; then
+            echo "⚠️  Duplicate dependencies detected:"
+            echo "$duplicates" | sed 's/^/    • /'
+            echo "💡 Consider removing duplicates manually"
+        fi
+        
+        echo "✅ Project validation complete"
+    fi
+}
+
 # Function to analyze and suggest exported functions from a package
 analyze_package_exports() {
     local repo_full_name="$1"
@@ -1278,6 +1374,11 @@ elif [[ "$PROJECT_SOURCE_CHOICE" == "1" || "$PROJECT_SOURCE_CHOICE" == "2" ]] &&
     echo "📱 Using project: $SELECTED_PROJECT"
 fi
 
+# Validate the selected project structure
+if [ -n "$SELECTED_PUBSPEC" ]; then
+    validate_project_structure "$(dirname "$SELECTED_PUBSPEC")"
+fi
+
 # Get repositories
 echo ""
 echo "🔍 Fetching your repositories..."
@@ -1437,6 +1538,20 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     if add_package_to_pubspec "$SELECTED_PUBSPEC" "$PACKAGE_NAME" "$REPO_URL" "$REF" "$SUB_PATH"; then
         ADDED_PACKAGES+=("$PACKAGE_NAME ($REPO_FULL_NAME)")
         echo "✅ Successfully added $PACKAGE_NAME"
+        
+        # Quick validation check after adding package
+        echo "🔍 Validating pubspec.yaml after addition..."
+        if ! flutter pub get --dry-run >/dev/null 2>&1; then
+            echo "⚠️  Potential issue detected with pubspec.yaml"
+            echo "💡 This might be due to package name mismatches or dependency conflicts"
+            
+            echo ""
+            echo "🔧 Would you like to run automatic validation and fixes? (y/N): "
+            read RUN_VALIDATION </dev/tty
+            if [[ $RUN_VALIDATION =~ ^[Yy]$ ]]; then
+                validate_project_structure "$(dirname "$SELECTED_PUBSPEC")"
+            fi
+        fi
         
         # Optional: Analyze exports from the added package
         echo ""

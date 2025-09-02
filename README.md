@@ -2,6 +2,24 @@
 
 A cross-platform tool that transforms GitHub into your private package manager for Flutter projects. Easily add GitHub repositories as git dependencies with an interactive interface.
 
+## ⚡ Quick Start (One-Line Install)
+
+### 🚀 Install & Run Immediately
+```bash
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash
+```
+
+### 🏃 Run Directly (No Installation) 
+```bash
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/run.sh | bash
+```
+
+### 📦 Install Only (Run Later)
+```bash
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash -s -- --no-run
+flutter-pm  # Run anytime!
+```
+
 ## 🚀 Features
 
 - **🔍 Enhanced Project Discovery**: 
