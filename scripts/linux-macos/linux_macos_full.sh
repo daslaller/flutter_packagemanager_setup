@@ -698,8 +698,12 @@ validate_package_name() {
             case "$NAME_FIX_CHOICE" in
                 1)
                     # Update pubspec to match directory
+                    echo ""
+                    echo "🔧 Making the following changes to $pubspec_path:"
+                    echo "   Before: name: $current_name"
+                    echo "   After:  name: $expected_dir_name"
                     cross_platform_sed "s/^name:.*/name: $expected_dir_name/" "$pubspec_path"
-                    echo "✅ Updated pubspec.yaml name to: $expected_dir_name"
+                    echo "✅ Successfully updated pubspec.yaml name to: $expected_dir_name"
                     ;;
                 2)
                     echo "✅ Keeping current name: $current_name"
@@ -713,8 +717,12 @@ validate_package_name() {
                     if [ -n "$NEW_NAME" ]; then
                         # Sanitize the name
                         NEW_NAME=$(echo "$NEW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_]/_/g' | sed 's/__*/_/g')
+                        echo ""
+                        echo "🔧 Making the following changes to $pubspec_path:"
+                        echo "   Before: name: $current_name"
+                        echo "   After:  name: $NEW_NAME"
                         cross_platform_sed "s/^name:.*/name: $NEW_NAME/" "$pubspec_path"
-                        echo "✅ Updated pubspec.yaml name to: $NEW_NAME"
+                        echo "✅ Successfully updated pubspec.yaml name to: $NEW_NAME"
                     else
                         echo "❌ Empty name, keeping original: $current_name"
                     fi
@@ -752,9 +760,47 @@ validate_project_structure() {
         }' "$pubspec_path" | sort | uniq -d)
         
         if [ -n "$duplicates" ]; then
-            echo "⚠️  Duplicate dependencies detected:"
+            echo ""
+            echo "⚠️  **Duplicate dependencies detected in $pubspec_path:**"
             echo "$duplicates" | sed 's/^/    • /'
-            echo "💡 Consider removing duplicates manually"
+            echo ""
+            echo "💡 These duplicate entries may cause dependency conflicts."
+            echo "🔧 Would you like to automatically remove duplicates? (y/N): "
+            read REMOVE_DUPLICATES </dev/tty
+            if [[ $REMOVE_DUPLICATES =~ ^[Yy]$ ]]; then
+                echo ""
+                echo "🔧 Creating backup: $pubspec_path.backup.$(date +%Y%m%d-%H%M%S)"
+                cp "$pubspec_path" "$pubspec_path.backup.$(date +%Y%m%d-%H%M%S)"
+                echo "🔧 Removing duplicate dependencies..."
+                
+                # Show which duplicates are being removed
+                echo "$duplicates" | while read -r duplicate; do
+                    echo "   Removing duplicate: $duplicate"
+                done
+                
+                # Create a temp file with duplicates removed (keep first occurrence)
+                awk '
+                /^dependencies:/,/^[^[:space:]]/ {
+                    if (/^[[:space:]]+[^[:space:]]+:/) {
+                        gsub(/^[[:space:]]+/, "")
+                        dep = $1
+                        gsub(/:.*/, "", dep)
+                        if (!seen[dep]) {
+                            seen[dep] = 1
+                            print
+                        }
+                    } else {
+                        print
+                    }
+                    next
+                }
+                { print }
+                ' "$pubspec_path" > "$pubspec_path.tmp" && mv "$pubspec_path.tmp" "$pubspec_path"
+                
+                echo "✅ Successfully removed duplicate dependencies"
+            else
+                echo "💡 You can manually remove duplicates later if needed"
+            fi
         fi
         
         echo "✅ Project validation complete"
@@ -1489,7 +1535,7 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     # Auto-discover monorepo structure
     discover_monorepo_structure "$REPO_FULL_NAME" "$REF"
     
-    # Use discovered path or ask for manual input
+    # Use discovered path or set defaults based on auto-detection
     if [ -n "$MONOREPO_SUB_PATH" ] && [ "$MONOREPO_SUB_PATH" != "." ]; then
         SUB_PATH="$MONOREPO_SUB_PATH"
         echo ""
@@ -1502,11 +1548,16 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
             echo "✅ Using custom override: $SUB_PATH"
         fi
     else
-        # Fallback to manual input if auto-discovery didn't work or found single package
-        echo ""
-        echo "If this is a monorepo, enter package subfolder path (empty for root): "
-        read SUB_PATH </dev/tty
-        SUB_PATH=${SUB_PATH:-}
+        # Auto-discovery determined single package - use root path
+        SUB_PATH=""
+        if [ -z "$MONOREPO_SUB_PATH" ]; then
+            # Only ask manual input if auto-discovery completely failed
+            echo ""
+            echo "⚠️  Auto-discovery failed. Manual input required."
+            echo "If this is a monorepo, enter package subfolder path (empty for root): "
+            read SUB_PATH </dev/tty
+            SUB_PATH=${SUB_PATH:-}
+        fi
     fi
 
     # Auto-detect default package name from repo pubspec on selected ref and path

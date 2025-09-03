@@ -158,8 +158,7 @@ create_global_command() {
     cat > "$INSTALL_DIR/$SCRIPT_NAME" << EOF
 #!/bin/bash
 # Flutter Package Manager global wrapper
-cd "$INSTALL_DIR"
-exec bash "$SCRIPT_PATH" "\$@"
+exec bash "$INSTALL_DIR/$SCRIPT_PATH" "\$@"
 EOF
     
     chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
