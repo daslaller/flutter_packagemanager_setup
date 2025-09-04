@@ -751,6 +751,7 @@ check_and_resolve_dependency_conflicts() {
     
     # Run pub get and capture output
     cd "$project_dir"
+    echo "   📦 Running dependency resolution..."
     if ! flutter pub get > "$temp_output" 2>&1; then
         local pub_output=$(cat "$temp_output")
         
@@ -1204,12 +1205,14 @@ validate_project_structure() {
     local pubspec_path="$project_dir/pubspec.yaml"
     
     echo "🔍 Validating project structure..."
+    echo "   📋 Checking package name consistency..."
     
     # Validate package name
     validate_package_name "$pubspec_path" "$project_name"
     
     # Check for common issues
     if [ -f "$pubspec_path" ]; then
+        echo "   🔍 Scanning for duplicate dependencies..."
         # Check for duplicate dependencies
         local duplicates=$(awk '/^dependencies:/,/^[^[:space:]]/ {
             if (/^[[:space:]]+[^[:space:]]+:/) {
@@ -1307,6 +1310,7 @@ check_git_dependency_cache() {
     fi
     
     echo "📦 Found Git dependencies:"
+    echo "   🔄 Analyzing dependency freshness..."
     local has_stale_deps=false
     local stale_deps=()
     
@@ -1318,6 +1322,7 @@ check_git_dependency_cache() {
             if [[ "$git_url" == *"github.com"* ]]; then
                 local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
                 
+                echo "     🔍 Checking latest commit via GitHub API..."
                 # Get latest commit hash for the branch/ref
                 local latest_commit=$(curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7)
                 
@@ -1333,6 +1338,7 @@ check_git_dependency_cache() {
                     fi
                     
                     if [ -n "$cache_dir" ]; then
+                        echo "     🔍 Scanning local pub cache..."
                         # Look for cached version of this repo
                         local repo_hash=$(echo "$git_url" | shasum | cut -c1-8)
                         local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
