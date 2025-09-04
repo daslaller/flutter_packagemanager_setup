@@ -2155,6 +2155,8 @@ fi
 
 # Validate the selected project structure
 if [ -n "$SELECTED_PUBSPEC" ]; then
+    echo ""
+    echo "🔍 Analyzing project dependencies and structure..."
     validate_project_structure "$(dirname "$SELECTED_PUBSPEC")"
 fi
 
