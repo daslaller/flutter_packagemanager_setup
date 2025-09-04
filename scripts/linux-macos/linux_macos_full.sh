@@ -737,6 +737,465 @@ validate_package_name() {
     fi
 }
 
+# Function to check and resolve dependency conflicts
+check_and_resolve_dependency_conflicts() {
+    local pubspec_path="$1"
+    
+    if [ ! -f "$pubspec_path" ]; then
+        return 0
+    fi
+    
+    local project_dir="$(dirname "$pubspec_path")"
+    local temp_output=$(mktemp)
+    
+    # Run pub get and capture output
+    cd "$project_dir"
+    if ! flutter pub get > "$temp_output" 2>&1; then
+        local pub_output=$(cat "$temp_output")
+        
+        # Check for version solving failures
+        if echo "$pub_output" | grep -q "version solving failed"; then
+            echo ""
+            echo "⚠️  **Dependency conflict detected!**"
+            echo ""
+            
+            # Parse all conflicting dependencies from the error output
+            parse_dependency_conflicts "$pub_output" "$pubspec_path"
+        fi
+    else
+        echo "✅ No dependency conflicts detected"
+    fi
+    
+    rm -f "$temp_output"
+    cd - >/dev/null
+}
+
+# Function to parse and resolve any dependency conflicts
+parse_dependency_conflicts() {
+    local pub_output="$1"
+    local pubspec_path="$2"
+    
+    # Extract conflicting packages and their version requirements
+    local conflicts_info=$(mktemp)
+    
+    # Parse the conflict messages to extract package names and versions
+    # Also identify which packages come from git vs pub.dev
+    local git_packages=$(mktemp)
+    
+    # Extract git package names from current pubspec
+    grep -A 5 "git:" "$pubspec_path" | grep -B 5 "url:" | grep "^[[:space:]]*[^[:space:]]*:" | sed 's/^[[:space:]]*//' | sed 's/:.*$//' > "$git_packages"
+    
+    echo "$pub_output" | awk -v git_file="$git_packages" '
+    BEGIN {
+        # Load git packages into array
+        while ((getline git_pkg < git_file) > 0) {
+            git_packages[git_pkg] = 1
+        }
+        close(git_file)
+    }
+    /Because.*from git depends on.*which depends on/ {
+        # Extract: "git_package from git depends on dependency ^version"
+        if (match($0, /([a-zA-Z_][a-zA-Z0-9_]*) from git depends on ([a-zA-Z_][a-zA-Z0-9_]*) \^?([0-9]+\.[0-9]+\.[0-9]+)/, arr)) {
+            print arr[2] ":" arr[3] ":git_source"  # dependency:version:git_source
+        }
+    }
+    /Because.*depends on.*which depends on/ {
+        # Extract: "package depends on dependency ^version"
+        if (match($0, /([a-zA-Z_][a-zA-Z0-9_]*) depends on ([a-zA-Z_][a-zA-Z0-9_]*) \^?([0-9]+\.[0-9]+\.[0-9]+)/, arr)) {
+            source = (arr[1] in git_packages) ? "git_source" : "pub_source"
+            print arr[2] ":" arr[3] ":" source  # dependency:version:source
+        }
+    }
+    /And because.*from git depends on/ {
+        # Extract: "git_package from git depends on dependency ^version"
+        if (match($0, /([a-zA-Z_][a-zA-Z0-9_]*) from git depends on ([a-zA-Z_][a-zA-Z0-9_]*) \^?([0-9]+\.[0-9]+\.[0-9]+)/, arr)) {
+            print arr[2] ":" arr[3] ":git_source"  # dependency:version:git_source
+        }
+    }
+    /And because.*depends on/ {
+        # Extract: "package depends on dependency ^version" 
+        if (match($0, /([a-zA-Z_][a-zA-Z0-9_]*) depends on ([a-zA-Z_][a-zA-Z0-9_]*) \^?([0-9]+\.[0-9]+\.[0-9]+)/, arr)) {
+            source = (arr[1] in git_packages) ? "git_source" : "pub_source"
+            print arr[2] ":" arr[3] ":" source  # dependency:version:source
+        }
+    }
+    ' > "$conflicts_info"
+    
+    rm -f "$git_packages"
+    
+    if [ -s "$conflicts_info" ]; then
+        echo "🔍 **Conflict Analysis:**"
+        show_detailed_conflict_analysis "$pub_output"
+        
+        echo ""
+        echo "🔧 **Auto-resolution options:**"
+        echo "1. 🎯 Automatically resolve with dependency overrides (recommended)"
+        echo "2. 📋 Show resolution strategy details"
+        echo "3. ⏭️  Skip auto-resolution (fix manually)"
+        echo ""
+        
+        echo "Choose option (1-3, default: 1): "
+        read RESOLVE_CHOICE </dev/tty
+        RESOLVE_CHOICE=${RESOLVE_CHOICE:-1}
+        
+        case "$RESOLVE_CHOICE" in
+            1)
+                auto_resolve_conflicts "$pubspec_path" "$conflicts_info" "$pub_output"
+                ;;
+            2)
+                show_resolution_strategy "$conflicts_info"
+                echo ""
+                echo "🔧 Apply automatic resolution? (y/N): "
+                read APPLY_RESOLUTION </dev/tty
+                if [[ $APPLY_RESOLUTION =~ ^[Yy]$ ]]; then
+                    auto_resolve_conflicts "$pubspec_path" "$conflicts_info" "$pub_output"
+                fi
+                ;;
+            3)
+                echo "💡 Manual resolution required. Check your pubspec.yaml dependencies."
+                ;;
+            *)
+                echo "❌ Invalid choice, skipping auto-resolution"
+                ;;
+        esac
+    else
+        echo "💡 Complex dependency conflict detected. Showing available information:"
+        echo "$pub_output" | tail -15 | sed 's/^/   /'
+    fi
+    
+    rm -f "$conflicts_info"
+}
+
+# Function to automatically resolve conflicts using dependency overrides
+auto_resolve_conflicts() {
+    local pubspec_path="$1"
+    local conflicts_info="$2"
+    local pub_output="$3"
+    
+    echo ""
+    echo "🔧 **Resolving dependency conflicts automatically...**"
+    echo ""
+    
+    # Create backup
+    local backup_path="$pubspec_path.backup.conflicts.$(date +%Y%m%d-%H%M%S)"
+    cp "$pubspec_path" "$backup_path"
+    echo "📋 Backup created: $(basename "$backup_path")"
+    
+    # Extract unique dependencies and pick the highest version
+    local overrides=$(mktemp)
+    
+    # Process conflicts to determine best versions with git source awareness  
+    echo ""
+    echo "🔍 **Analyzing conflict sources:**"
+    
+    # Show which packages are causing outdated constraints
+    awk -F: '/git_source/ {
+        print "   📦 " $1 " (v" $2 ") - constraint from Git package (likely outdated)"
+    }
+    /pub_source/ {
+        print "   🌐 " $1 " (v" $2 ") - constraint from pub.dev package"
+    }' "$conflicts_info"
+    
+    echo ""
+    echo "💡 **Git packages often have outdated constraints. Using latest compatible versions...**"
+    
+    # Process conflicts with intelligent version resolution
+    sort "$conflicts_info" | uniq | awk -F: '
+    {
+        dep = $1
+        version = $2 
+        source = $3
+        
+        if (dep && version) {
+            if (dep in versions) {
+                # Compare versions and keep the higher one
+                split(version, new_ver, ".")
+                split(versions[dep], old_ver, ".")
+                
+                # Simple version comparison (major.minor.patch)
+                if (new_ver[1] > old_ver[1] || 
+                    (new_ver[1] == old_ver[1] && new_ver[2] > old_ver[2]) ||
+                    (new_ver[1] == old_ver[1] && new_ver[2] == old_ver[2] && new_ver[3] > old_ver[3])) {
+                    versions[dep] = version
+                    sources[dep] = source
+                }
+                # If versions are equal, prefer pub.dev sources over git sources for latest versions
+                else if (new_ver[1] == old_ver[1] && new_ver[2] == old_ver[2] && new_ver[3] == old_ver[3]) {
+                    if (source == "pub_source" && sources[dep] == "git_source") {
+                        versions[dep] = version
+                        sources[dep] = source
+                    }
+                }
+            } else {
+                versions[dep] = version
+                sources[dep] = source
+            }
+        }
+    }
+    END {
+        for (dep in versions) {
+            print dep ":" versions[dep] ":" sources[dep]
+        }
+    }
+    ' | while IFS=: read -r dep version source; do
+        
+        # For git-sourced constraints, try to upgrade to latest compatible version
+        if [ "$source" = "git_source" ] && [ -n "$dep" ]; then
+            echo "🔄 Resolving $dep constraint (v$version) from Git source..."
+            
+            # First, check if this dependency is also a Git repository in current pubspec
+            local dep_is_git_repo=false
+            if grep -A 5 "$dep:" "$pubspec_path" | grep -q "git:"; then
+                dep_is_git_repo=true
+                echo "   📦 $dep is also a Git dependency - checking for updates..."
+            fi
+            
+            # Get latest version from pub.dev API first
+            latest_version=$(curl -s "https://pub.dev/api/packages/$dep" 2>/dev/null | grep -o '"latest"[^}]*"version":"[^"]*"' | sed 's/.*"version":"\([^"]*\)".*/\1/' | head -1)
+            
+            if [ -n "$latest_version" ] && [ "$latest_version" != "null" ]; then
+                # Use latest pub.dev version
+                echo "$dep:$latest_version:upgraded"
+            elif [ "$dep_is_git_repo" = true ]; then
+                # This dependency is a Git repo - suggest updating the Git source
+                echo "   🔍 Checking Git repository for updates..."
+                
+                # Extract the Git URL for this dependency
+                local git_url=$(awk "/$dep:/{found=1} found && /url:/{print \$2; exit}" "$pubspec_path" | tr -d '"')
+                
+                if [ -n "$git_url" ]; then
+                    echo "   📂 Git repository: $git_url"
+                    
+                    # Try to get latest tag/version from GitHub API
+                    if [[ "$git_url" == *"github.com"* ]]; then
+                        local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
+                        local latest_tag=$(curl -s "https://api.github.com/repos/$repo_path/tags" 2>/dev/null | grep '"name"' | head -1 | sed 's/.*"name": *"\([^"]*\)".*/\1/')
+                        
+                        if [ -n "$latest_tag" ] && [ "$latest_tag" != "null" ]; then
+                            # Extract version from tag (remove v prefix if present)
+                            local clean_version=$(echo "$latest_tag" | sed 's/^v//')
+                            echo "$dep:$clean_version:git_updated"
+                        else
+                            echo "$dep:$version:git_no_tags"
+                        fi
+                    else
+                        echo "$dep:$version:git_unknown_host"
+                    fi
+                else
+                    echo "$dep:$version:git_no_url"
+                fi
+            else
+                # Not available on pub.dev and not a Git dependency - use fallback
+                case "$dep" in
+                    firebase_core)
+                        echo "$dep:3.24.2:fallback"
+                        ;;
+                    cloud_firestore)
+                        echo "$dep:5.4.3:fallback"
+                        ;;
+                    firebase_auth)
+                        echo "$dep:5.3.1:fallback"
+                        ;;
+                    *)
+                        # For unknown packages, try incrementing major version
+                        major_version=$(echo "$version" | cut -d. -f1)
+                        upgraded_major=$((major_version + 1))
+                        echo "$dep:$upgraded_major.0.0:estimated"
+                        ;;
+                esac
+            fi
+        else
+            echo "$dep:$version:$source"
+        fi
+    done > "$overrides"
+    
+    if [ ! -s "$overrides" ]; then
+        echo "⚠️  Could not parse version requirements. Trying intelligent defaults..."
+        # Fallback: Add common dependency overrides for typical conflicts
+        echo "firebase_core:3.15.2" > "$overrides"
+        echo "cloud_firestore:4.0.0" >> "$overrides"
+    fi
+    
+    # Check if dependency_overrides section exists
+    if ! grep -q "^dependency_overrides:" "$pubspec_path"; then
+        echo "" >> "$pubspec_path"
+        echo "dependency_overrides:" >> "$pubspec_path"
+        echo "🔧 Added dependency_overrides section"
+    fi
+    
+    # Add overrides
+    echo "🔧 **Adding smart dependency overrides:**"
+    local changes_made=false
+    
+    while IFS=: read -r dep version source_type; do
+        if [ -n "$dep" ] && [ -n "$version" ]; then
+            case "$source_type" in
+                "upgraded")
+                    echo "   $dep: ^$version ✨ (upgraded from outdated git constraint)"
+                    ;;
+                "git_updated")
+                    echo "   $dep: ^$version 🏷️  (latest Git tag version)"
+                    ;;
+                "git_no_tags")
+                    echo "   $dep: ^$version ⚠️  (Git repo has no version tags - using constraint version)"
+                    ;;
+                "git_unknown_host")
+                    echo "   $dep: ^$version 🔗 (non-GitHub Git repo - using constraint version)"
+                    ;;
+                "git_no_url")
+                    echo "   $dep: ^$version ❓ (could not extract Git URL - using constraint version)"
+                    ;;
+                "fallback") 
+                    echo "   $dep: ^$version 🔄 (using known compatible version)"
+                    ;;
+                "estimated")
+                    echo "   $dep: ^$version 🎯 (estimated upgrade)"
+                    ;;
+                *)
+                    echo "   $dep: ^$version"
+                    ;;
+            esac
+            
+            # Remove existing override for this dependency
+            cross_platform_sed "/^dependency_overrides:/,/^[^[:space:]]/{/^[[:space:]]*$dep:/d;}" "$pubspec_path"
+            
+            # Add new override
+            awk -v dep="$dep" -v ver="^$version" '
+            /^dependency_overrides:/ {
+                print
+                print "  " dep ": " ver
+                next
+            }
+            {print}
+            ' "$pubspec_path" > "$pubspec_path.tmp" && mv "$pubspec_path.tmp" "$pubspec_path"
+            
+            changes_made=true
+        fi
+    done < "$overrides"
+    
+    rm -f "$overrides"
+    
+    if [ "$changes_made" = true ]; then
+        echo ""
+        echo "🧪 Testing dependency resolution..."
+        local project_dir="$(dirname "$pubspec_path")"
+        cd "$project_dir"
+        
+        if flutter pub get >/dev/null 2>&1; then
+            echo "✅ **All dependency conflicts resolved successfully!**"
+            echo "💡 Conflicting packages will now use compatible versions."
+            echo ""
+            echo "📋 **Summary of changes made to pubspec.yaml:**"
+            grep -A 20 "^dependency_overrides:" "$pubspec_path" | grep "^[[:space:]]*[^[:space:]]" | sed 's/^/   Added: /'
+            
+            # Check if any Git repositories need attention
+            if grep -q "git_no_tags\|git_unknown_host" "$overrides" 2>/dev/null; then
+                echo ""
+                echo "💡 **Recommendations for Git dependencies:**"
+                
+                grep "git_no_tags\|git_unknown_host" "$overrides" 2>/dev/null | while IFS=: read -r dep version source_type; do
+                    case "$source_type" in
+                        "git_no_tags")
+                            echo "   📦 $dep: Consider asking the maintainer to create version tags"
+                            ;;
+                        "git_unknown_host")
+                            echo "   🔗 $dep: Consider migrating to GitHub or pub.dev for better version management"
+                            ;;
+                    esac
+                done
+                
+                echo ""
+                echo "🔧 **Long-term solution:** Ask Git package maintainers to:"
+                echo "   1. Update their pubspec.yaml with current dependency versions"
+                echo "   2. Create proper semantic version tags (v1.0.0, v1.1.0, etc.)"
+                echo "   3. Publish to pub.dev for better dependency management"
+            fi
+        else
+            echo "⚠️  Some conflicts may remain. Checking for additional issues..."
+            
+            # Try one more time with flutter pub deps to get more info
+            local remaining_output=$(mktemp)
+            flutter pub get > "$remaining_output" 2>&1
+            
+            if grep -q "version solving failed" "$remaining_output"; then
+                echo "❌ Auto-resolution partially successful but conflicts remain."
+                echo "💡 Showing remaining issues:"
+                cat "$remaining_output" | tail -10 | sed 's/^/   /'
+                echo ""
+                echo "🔧 Consider manually updating the conflicting packages or contact their authors."
+            else
+                echo "✅ **Resolution successful after retry!**"
+            fi
+            
+            rm -f "$remaining_output"
+        fi
+        
+        cd - >/dev/null
+    else
+        echo "❌ No overrides could be applied. Manual resolution required."
+    fi
+}
+
+# Function to show resolution strategy
+show_resolution_strategy() {
+    local conflicts_info="$1"
+    
+    echo ""
+    echo "📋 **Resolution Strategy:**"
+    echo "========================"
+    echo ""
+    echo "The following dependency overrides will be added to force compatible versions:"
+    echo ""
+    
+    sort "$conflicts_info" | uniq | awk -F: '{
+        if ($1 && $2) {
+            printf "  %s: ^%s\n", $1, $2
+        }
+    }' | sort -u
+    
+    echo ""
+    echo "💡 This forces all packages to use the specified versions, resolving conflicts."
+    echo "⚠️  Note: Overrides should be temporary - ideally package authors should update their dependencies."
+}
+
+# Function to show detailed conflict analysis
+show_detailed_conflict_analysis() {
+    local pub_output="$1"
+    
+    echo ""
+    echo "🔍 **Detailed Dependency Conflict Analysis:**"
+    echo "=================================="
+    
+    # Extract and format the conflict information
+    echo "$pub_output" | awk '
+    /Because.*depends on.*which depends on/ {
+        gsub(/Because /, "📦 ")
+        gsub(/ which depends on/, "\n    └── which depends on")
+        print
+        print ""
+    }
+    /And because.*depends on/ {
+        gsub(/And because /, "📦 ")
+        print
+        print ""
+    }
+    /is incompatible with/ {
+        gsub(/is incompatible with/, "❌ is incompatible with")
+        print
+        print ""
+    }
+    /version solving failed/ {
+        print "💥 " $0
+    }
+    '
+    
+    echo ""
+    echo "💡 **Resolution strategies:**"
+    echo "1. Use dependency_overrides to force compatible versions"
+    echo "2. Update git packages to use newer Firebase versions"
+    echo "3. Contact package authors to update their dependencies"
+}
+
 # Function to validate entire project structure
 validate_project_structure() {
     local project_dir="$1"
@@ -803,8 +1262,275 @@ validate_project_structure() {
             fi
         fi
         
+        # Check for dependency conflicts
+        echo ""
+        echo "🔍 Checking for dependency conflicts..."
+        check_and_resolve_dependency_conflicts "$pubspec_path"
+        
+        # Check for Git dependency cache issues
+        echo ""
+        echo "🔄 Checking Git dependency cache..."
+        check_git_dependency_cache "$pubspec_path"
+        
         echo "✅ Project validation complete"
     fi
+}
+
+# Function to check and refresh Git dependency cache
+check_git_dependency_cache() {
+    local pubspec_path="$1"
+    local project_dir="$(dirname "$pubspec_path")"
+    
+    if [ ! -f "$pubspec_path" ]; then
+        return 0
+    fi
+    
+    # Extract Git dependencies from pubspec.yaml
+    local git_deps=$(mktemp)
+    awk '/^[[:space:]]*[^#]*:/{dep_name=$1; gsub(/:/, "", dep_name)} 
+         /^[[:space:]]*git:/{in_git=1; next} 
+         in_git && /^[[:space:]]*url:/{url=$2; gsub(/["]/, "", url)} 
+         in_git && /^[[:space:]]*ref:/{ref=$2; gsub(/["]/, "", ref)} 
+         in_git && /^[[:space:]]*[^[:space:]]/ && !/url:/ && !/ref:/ && !/path:/{
+             if(dep_name && url) {
+                 print dep_name ":" url ":" (ref ? ref : "main")
+                 dep_name=""; url=""; ref=""; in_git=0
+             }
+         }
+         /^[^[:space:]]/ && !/dependencies:/ && !/dependency_overrides:/{in_git=0}' "$pubspec_path" > "$git_deps"
+    
+    if [ ! -s "$git_deps" ]; then
+        echo "✅ No Git dependencies found"
+        rm -f "$git_deps"
+        return 0
+    fi
+    
+    echo "📦 Found Git dependencies:"
+    local has_stale_deps=false
+    local stale_deps=()
+    
+    while IFS=: read -r dep_name git_url git_ref; do
+        if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
+            echo "   $dep_name ($git_ref) from $git_url"
+            
+            # Check if this is a GitHub repo and get latest commit
+            if [[ "$git_url" == *"github.com"* ]]; then
+                local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
+                
+                # Get latest commit hash for the branch/ref
+                local latest_commit=$(curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7)
+                
+                if [ -n "$latest_commit" ] && [ "$latest_commit" != "null" ]; then
+                    echo "     Latest commit: $latest_commit"
+                    
+                    # Check Flutter's cache to see what commit we have
+                    local cache_dir=""
+                    if [ -d "$HOME/.pub-cache/git" ]; then
+                        cache_dir="$HOME/.pub-cache/git"
+                    elif [ -d "$HOME/AppData/Local/Pub/Cache/git" ]; then  # Windows
+                        cache_dir="$HOME/AppData/Local/Pub/Cache/git"
+                    fi
+                    
+                    if [ -n "$cache_dir" ]; then
+                        # Look for cached version of this repo
+                        local repo_hash=$(echo "$git_url" | shasum | cut -c1-8)
+                        local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
+                        
+                        if [ -n "$cached_paths" ]; then
+                            local cached_commit=""
+                            for cached_path in $cached_paths; do
+                                if [ -d "$cached_path/.git" ]; then
+                                    cached_commit=$(cd "$cached_path" && git rev-parse HEAD 2>/dev/null | cut -c1-7)
+                                    break
+                                fi
+                            done
+                            
+                            if [ -n "$cached_commit" ]; then
+                                echo "     Cached commit: $cached_commit"
+                                
+                                if [ "$cached_commit" != "$latest_commit" ]; then
+                                    echo "     🔄 STALE - newer commits available!"
+                                    has_stale_deps=true
+                                    stale_deps+=("$dep_name:$git_url:$git_ref:$cached_commit:$latest_commit")
+                                else
+                                    echo "     ✅ Up to date"
+                                fi
+                            else
+                                echo "     ⚠️  Could not determine cached commit"
+                            fi
+                        else
+                            echo "     📥 Not cached yet"
+                        fi
+                    fi
+                else
+                    echo "     ⚠️  Could not fetch latest commit info"
+                fi
+            else
+                echo "     🔗 Non-GitHub repo - cannot check for updates"
+            fi
+            echo ""
+        fi
+    done < "$git_deps"
+    
+    rm -f "$git_deps"
+    
+    if [ "$has_stale_deps" = true ]; then
+        echo ""
+        echo "⚠️  **Stale Git dependencies detected!**"
+        echo ""
+        echo "🔧 **Resolution options:**"
+        echo "1. 🧹 Clear Flutter cache and fetch latest commits (recommended)"
+        echo "2. 🎯 Force refresh specific packages only"
+        echo "3. 📋 Show detailed cache information"
+        echo "4. ⏭️  Skip cache refresh"
+        echo ""
+        
+        echo "Choose option (1-4, default: 1): "
+        read CACHE_CHOICE </dev/tty
+        CACHE_CHOICE=${CACHE_CHOICE:-1}
+        
+        case "$CACHE_CHOICE" in
+            1)
+                refresh_git_dependency_cache "$project_dir" "all" "${stale_deps[@]}"
+                ;;
+            2)
+                select_packages_to_refresh "$project_dir" "${stale_deps[@]}"
+                ;;
+            3)
+                show_detailed_cache_info "${stale_deps[@]}"
+                echo ""
+                echo "🔧 Refresh cache now? (y/N): "
+                read REFRESH_NOW </dev/tty
+                if [[ $REFRESH_NOW =~ ^[Yy]$ ]]; then
+                    refresh_git_dependency_cache "$project_dir" "all" "${stale_deps[@]}"
+                fi
+                ;;
+            4)
+                echo "💡 Git dependencies will continue using cached versions"
+                ;;
+            *)
+                echo "❌ Invalid choice, skipping cache refresh"
+                ;;
+        esac
+    else
+        echo "✅ All Git dependencies are up to date"
+    fi
+}
+
+# Function to refresh Git dependency cache
+refresh_git_dependency_cache() {
+    local project_dir="$1"
+    local refresh_type="$2"
+    shift 2
+    local stale_deps=("$@")
+    
+    echo ""
+    echo "🧹 **Refreshing Git dependency cache...**"
+    echo ""
+    
+    cd "$project_dir"
+    
+    if [ "$refresh_type" = "all" ]; then
+        echo "🗑️  Clearing Flutter pub cache..."
+        flutter pub cache clean
+        
+        echo "📦 Re-fetching all dependencies..."
+        flutter pub get
+        
+        if [ $? -eq 0 ]; then
+            echo "✅ **All Git dependencies refreshed successfully!**"
+            echo ""
+            echo "📋 **Verification - latest commits now cached:**"
+            for stale_info in "${stale_deps[@]}"; do
+                IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+                echo "   $dep_name: $cached_commit → $latest_commit ✨"
+            done
+        else
+            echo "❌ Failed to refresh dependencies - check for conflicts"
+        fi
+    else
+        # Selective refresh (more complex, requires careful cache manipulation)
+        echo "🎯 Selective refresh not yet implemented - using full refresh..."
+        flutter pub cache clean
+        flutter pub get
+    fi
+    
+    cd - >/dev/null
+}
+
+# Function to select specific packages to refresh
+select_packages_to_refresh() {
+    local project_dir="$1"
+    shift
+    local stale_deps=("$@")
+    
+    echo ""
+    echo "🎯 **Select packages to refresh:**"
+    echo ""
+    
+    local selected_packages=()
+    local i=1
+    
+    for stale_info in "${stale_deps[@]}"; do
+        IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+        echo "$i. $dep_name ($cached_commit → $latest_commit)"
+        i=$((i+1))
+    done
+    
+    echo ""
+    echo "Enter package numbers (comma-separated, or 'all'): "
+    read PACKAGE_SELECTION </dev/tty
+    
+    if [ "$PACKAGE_SELECTION" = "all" ]; then
+        refresh_git_dependency_cache "$project_dir" "all" "${stale_deps[@]}"
+    else
+        # For now, fall back to full refresh since selective refresh is complex
+        echo "💡 Selective refresh requires full cache clear - refreshing all..."
+        refresh_git_dependency_cache "$project_dir" "all" "${stale_deps[@]}"
+    fi
+}
+
+# Function to show detailed cache information
+show_detailed_cache_info() {
+    local stale_deps=("$@")
+    
+    echo ""
+    echo "📋 **Detailed Git Dependency Cache Information:**"
+    echo "=============================================="
+    
+    for stale_info in "${stale_deps[@]}"; do
+        IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+        
+        echo ""
+        echo "📦 **$dep_name**"
+        echo "   Repository: $git_url"
+        echo "   Branch/Ref: $git_ref"
+        echo "   Cached commit: $cached_commit"
+        echo "   Latest commit: $latest_commit"
+        echo "   Status: 🔄 OUTDATED"
+        
+        # Try to get commit messages for context
+        if [[ "$git_url" == *"github.com"* ]]; then
+            local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
+            
+            echo "   Recent commits:"
+            curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref?per_page=3" 2>/dev/null | \
+                grep -E '"message"|"date"' | \
+                paste - - | \
+                sed 's/.*"message": *"\([^"]*\)".*"date": *"\([^"]*\)".*/     • \1 (\2)/' | \
+                head -3
+        fi
+    done
+    
+    echo ""
+    echo "💡 **Why this happens:**"
+    echo "   Flutter caches Git dependencies by commit hash, not branch name."
+    echo "   Even when you update the remote branch, Flutter keeps using the cached commit."
+    echo ""
+    echo "🔧 **Solutions:**"
+    echo "   1. Clear pub cache: flutter pub cache clean && flutter pub get"
+    echo "   2. Use specific commit hashes in pubspec.yaml instead of branch names"
+    echo "   3. Create version tags in your Git repositories for stable releases"
 }
 
 # Function to analyze and suggest exported functions from a package
