@@ -42,6 +42,7 @@ flutter-pm  # Run anytime!
 
 ## 🚀 Features
 
+- **🤖 Smart Dependency Recommendations**: AI-powered code analysis that detects Flutter patterns and suggests high-quality packages with intelligent quality scoring
 - **🔍 Enhanced Project Discovery**: 
   - **Local Scan**: Automatically finds Flutter projects in common directories
   - **GitHub Fetch**: Clone Flutter projects directly from GitHub with custom save locations
@@ -63,12 +64,15 @@ flutter_packagemanager_setup/
 │   │   ├── auto_and_download_windows.bat
 │   │   └── auto_and_use_local_sh.bat
 │   └── shared/
-│       └── multiselect.sh           # Reusable multiselect component
+│       ├── multiselect.sh           # Reusable multiselect component
+│       └── smart_recommendations.sh  # AI-powered package recommendations
 ├── tests/
 │   └── test_multiselect.sh          # Test for multiselect functionality
+├── test_smart_recommendations.sh    # Test for smart recommendations system
 ├── examples/
 │   └── test_flutter_project/        # Example Flutter project
 ├── docs/
+├── future-plans.md                  # Comprehensive AI roadmap
 └── README.md
 ```
 
@@ -224,43 +228,26 @@ gh auth login
 
 This project is open source. See LICENSE file for details.
 
+## 🤝 Major Contributors
+
+### 🚀 **Daslaller** - Creator & Lead Developer
+- Original concept and architecture
+- Core Flutter Package Manager implementation
+- Cross-platform support (Windows, macOS, Linux)
+- Interactive multiselect interface
+- GitHub integration and authentication system
+
+### 🤖 **Claude (Anthropic)** - AI Development Partner
+- **Smart Dependency Recommendations System** - AI-powered code analysis that detects Flutter patterns and suggests high-quality packages with intelligent quality scoring (Phase 1 of the AI roadmap)
+- **Advanced Code Pattern Detection** - Comprehensive analysis engine that identifies improvement opportunities across 10+ Flutter/Dart patterns
+- **Quality-First Package Database** - Curated recommendations prioritizing code elegance and ingenuity over popularity
+- **Installer Reliability Engineering** - Fixed critical bugs in curl|bash installations and terminal input handling
+- **Documentation & Architecture** - Comprehensive future roadmap planning and technical documentation
+
+*This collaboration represents a unique partnership between human creativity and AI technical expertise, resulting in an intelligent package management system that prioritizes code quality and developer experience.*
+
 ## 🔗 Related
 
 - [GitHub CLI Documentation](https://cli.github.com)
 - [Flutter Dependencies Guide](https://docs.flutter.dev/development/packages-and-plugins/using-packages)
 - [Git Dependencies in pubspec.yaml](https://dart.dev/tools/pub/dependencies#git-packages)
-
-# Check if current directory has pubspec.yaml
-CURRENT_PUBSPEC="./pubspec.yaml"
-if [ -f "$CURRENT_PUBSPEC" ]; then
-    echo "📱 Found pubspec.yaml in current directory"
-    read -p "Use current directory project? (Y/n): " USE_CURRENT
-
-    if [[ ! $USE_CURRENT =~ ^[Nn]$ ]]; then
-        SELECTED_PUBSPEC="$CURRENT_PUBSPEC"
-        SELECTED_PROJECT=$(basename "$(pwd)")
-        echo "📱 Using project: $SELECTED_PROJECT"
-        
-        # CRITICAL: Simulate the terminal state that GitHub operations create
-        # This is the missing piece when starting from current directory
-        echo "🔧 Preparing terminal for interactive selection..."
-        
-        # Mimic what gh auth login and other GitHub operations do to terminal
-        if command -v stty >/dev/null 2>&1; then
-            # Reset and prepare terminal like GitHub CLI does
-            stty sane
-            stty -echo -icanon
-            
-            # Brief interaction simulation that primes the terminal
-            sleep 0.1
-            
-            # Reset to normal for the interim
-            stty echo icanon
-        fi
-        
-        # Additional step: simulate some I/O like GitHub operations do
-        echo -n "✓ Terminal prepared"
-        sleep 0.05
-        echo ""
-    fi
-fi
