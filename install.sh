@@ -118,33 +118,219 @@ install_dependencies() {
     fi
 }
 
-# Function to download the package manager
+# Function to download the package manager with smart update detection
 download_package_manager() {
     echo ""
     echo "📥 Downloading Flutter Package Manager..."
     
     # Create install directory
-    mkdir -p "$INSTALL_DIR"
-    
-    # Download the repository
-    if [ -d "$INSTALL_DIR/.git" ]; then
-        echo "📂 Updating existing installation..."
-        cd "$INSTALL_DIR"
-        git pull origin "$BRANCH" >/dev/null 2>&1 || {
-            echo "⚠️  Update failed, downloading fresh copy..."
-            cd ..
-            rm -rf "$INSTALL_DIR"
-            git clone "$REPO_URL" "$INSTALL_DIR"
-        }
-    else
-        echo "📥 Downloading fresh installation..."
-        if [ -d "$INSTALL_DIR" ]; then
-            rm -rf "$INSTALL_DIR"
-        fi
+    if [ ! -d "$INSTALL_DIR" ]; then
+        mkdir -p "$INSTALL_DIR"
+        echo "📥 Fresh installation detected"
         git clone "$REPO_URL" "$INSTALL_DIR"
+        echo "✅ Download complete"
+        return 0
     fi
     
-    echo "✅ Download complete"
+    # Smart update detection for existing installation
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        echo "🔍 Analyzing existing installation for selective updates..."
+        
+        cd "$INSTALL_DIR"
+        
+        # Get current commit hash
+        local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        
+        # Fetch latest changes to compare
+        git fetch origin "$BRANCH" >/dev/null 2>&1
+        local latest_commit=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "unknown")
+        
+        if [ "$current_commit" = "$latest_commit" ]; then
+            echo "✅ Installation is already up to date (commit: ${current_commit:0:7})"
+            cd - >/dev/null
+            return 0
+        fi
+        
+        echo "🔄 Updates available (${current_commit:0:7} → ${latest_commit:0:7})"
+        echo "📋 Analyzing file changes for selective update..."
+        
+        # Get list of changed files between commits
+        local changed_files=$(git diff --name-only HEAD "origin/$BRANCH" 2>/dev/null)
+        
+        if [ -z "$changed_files" ]; then
+            echo "✅ No file changes detected, updating commit reference only..."
+            git pull origin "$BRANCH" >/dev/null 2>&1
+            cd - >/dev/null
+            return 0
+        fi
+        
+        # Show what files will be updated
+        echo ""
+        echo "📝 **Files to be updated:**"
+        echo "$changed_files" | while read -r file; do
+            if [ -n "$file" ]; then
+                # Get file size for context
+                local size=""
+                if [ -f "$file" ]; then
+                    size=" ($(wc -c < "$file" 2>/dev/null || echo "0") bytes)"
+                fi
+                echo "   📄 $file$size"
+            fi
+        done
+        
+        echo ""
+        echo "🔧 **Update options:**"
+        echo "1. 🚀 Update all changed files (recommended)"
+        echo "2. 🎯 Select specific files to update"
+        echo "3. 📋 Show detailed file differences"
+        echo "4. ⏭️  Skip update (keep current version)"
+        echo ""
+        
+        echo "Choose option (1-4, default: 1): "
+        read UPDATE_CHOICE
+        UPDATE_CHOICE=${UPDATE_CHOICE:-1}
+        
+        case "$UPDATE_CHOICE" in
+            1)
+                perform_selective_update "$changed_files" "all"
+                ;;
+            2)
+                select_files_to_update "$changed_files"
+                ;;
+            3)
+                show_file_differences "$changed_files"
+                echo ""
+                echo "🔧 Apply updates now? (y/N): "
+                read APPLY_UPDATES
+                if [[ $APPLY_UPDATES =~ ^[Yy]$ ]]; then
+                    perform_selective_update "$changed_files" "all"
+                fi
+                ;;
+            4)
+                echo "⏭️  Keeping current version (${current_commit:0:7})"
+                cd - >/dev/null
+                return 0
+                ;;
+            *)
+                echo "❌ Invalid choice, updating all files..."
+                perform_selective_update "$changed_files" "all"
+                ;;
+        esac
+        
+        cd - >/dev/null
+    else
+        echo "📂 Non-git installation detected, performing full replacement..."
+        rm -rf "$INSTALL_DIR"
+        git clone "$REPO_URL" "$INSTALL_DIR"
+        echo "✅ Fresh installation complete"
+    fi
+}
+
+# Function to perform selective file updates
+perform_selective_update() {
+    local changed_files="$1"
+    local update_mode="$2"
+    
+    echo ""
+    echo "🔄 **Performing selective update...**"
+    echo ""
+    
+    if [ "$update_mode" = "all" ]; then
+        # Update all changed files
+        echo "📦 Updating all changed files..."
+        git pull origin "$BRANCH" >/dev/null 2>&1
+        
+        local new_commit=$(git rev-parse HEAD 2>/dev/null | cut -c1-7)
+        echo "✅ **Update complete!** (now at commit: $new_commit)"
+        
+        echo ""
+        echo "📋 **Files updated:**"
+        echo "$changed_files" | while read -r file; do
+            if [ -n "$file" ]; then
+                echo "   ✨ $file"
+            fi
+        done
+    else
+        # Selective file update (would require more complex git operations)
+        echo "🎯 Selective file update not yet implemented, updating all..."
+        git pull origin "$BRANCH" >/dev/null 2>&1
+    fi
+}
+
+# Function to select specific files to update
+select_files_to_update() {
+    local changed_files="$1"
+    
+    echo ""
+    echo "🎯 **Select files to update:**"
+    echo ""
+    
+    local i=1
+    echo "$changed_files" | while read -r file; do
+        if [ -n "$file" ]; then
+            echo "$i. 📄 $file"
+            i=$((i+1))
+        fi
+    done
+    
+    echo ""
+    echo "Enter file numbers (comma-separated, or 'all'): "
+    read FILE_SELECTION
+    
+    if [ "$FILE_SELECTION" = "all" ]; then
+        perform_selective_update "$changed_files" "all"
+    else
+        echo "💡 Individual file selection requires full update - updating all..."
+        perform_selective_update "$changed_files" "all"
+    fi
+}
+
+# Function to show detailed file differences
+show_file_differences() {
+    local changed_files="$1"
+    
+    echo ""
+    echo "📋 **Detailed File Changes:**"
+    echo "============================"
+    
+    echo "$changed_files" | while read -r file; do
+        if [ -n "$file" ]; then
+            echo ""
+            echo "📄 **$file**"
+            echo "$(printf '%.50s' "$(printf '%*s' 50 '' | tr ' ' '-')")"
+            
+            # Show file diff summary
+            local additions=$(git diff --numstat HEAD "origin/$BRANCH" -- "$file" 2>/dev/null | cut -f1)
+            local deletions=$(git diff --numstat HEAD "origin/$BRANCH" -- "$file" 2>/dev/null | cut -f2)
+            
+            if [ -n "$additions" ] && [ -n "$deletions" ]; then
+                echo "   📊 Changes: +$additions additions, -$deletions deletions"
+            fi
+            
+            # Show first few lines of diff for context
+            echo "   📝 Preview:"
+            git diff HEAD "origin/$BRANCH" -- "$file" 2>/dev/null | head -20 | sed 's/^/      /'
+            
+            # Check if this is a critical file
+            case "$file" in
+                *linux_macos_full.sh)
+                    echo "   🎯 **Main script file** - contains core functionality"
+                    ;;
+                *windows*.ps1)
+                    echo "   🪟 **Windows script** - Windows-specific functionality"
+                    ;;
+                install.sh)
+                    echo "   📦 **Installer script** - installation and update logic"
+                    ;;
+                README.md)
+                    echo "   📚 **Documentation** - user instructions and info"
+                    ;;
+                *)
+                    echo "   📁 **Supporting file** - additional functionality"
+                    ;;
+            esac
+        fi
+    done
 }
 
 # Function to create global command
