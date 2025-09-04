@@ -15,6 +15,7 @@ echo "=========================="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../shared/multiselect.sh"
 source "$SCRIPT_DIR/../shared/cross_platform_utils.sh"
+source "$SCRIPT_DIR/../shared/smart_recommendations.sh"
 
 # Resolve scripts root (parent of this script's directory)
 SCRIPTS_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -2181,6 +2182,29 @@ if [ ${#REPO_OPTIONS[@]} -eq 0 ]; then
 fi
 
 echo ""
+clear
+
+# Show smart recommendations before package selection
+echo "🤖 **SMART ANALYSIS & RECOMMENDATIONS**"
+echo "======================================"
+echo ""
+
+# Analyze the selected project for smart recommendations
+if [ -n "$SELECTED_PUBSPEC" ]; then
+    local project_dir="$(dirname "$SELECTED_PUBSPEC")"
+    echo "📊 Analyzing your Flutter project for intelligent package suggestions..."
+    echo ""
+    
+    # Run smart recommendations analysis
+    analyze_code_patterns "$project_dir"
+    
+    echo ""
+    echo "⚡ **Ready to add packages!** The recommendations above will help you choose wisely."
+    echo ""
+    echo "Press Enter to continue to package selection..."
+    read -p "" CONTINUE_TO_SELECTION </dev/tty
+fi
+
 clear
 echo "📋 Select repositories to add as packages:"
 echo ""
