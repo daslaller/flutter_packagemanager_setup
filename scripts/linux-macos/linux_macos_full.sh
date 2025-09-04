@@ -2378,6 +2378,25 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🎉 Package processing complete!"
 echo ""
 
+# Check for dependency conflicts and stale Git dependencies after package addition
+if [ ${#ADDED_PACKAGES[@]} -gt 0 ]; then
+    echo "🔍 Running post-installation dependency analysis..."
+    echo ""
+    
+    # Check for dependency conflicts
+    echo "🔍 Checking for dependency conflicts..."
+    check_and_resolve_dependency_conflicts "$SELECTED_PUBSPEC"
+    
+    # Check for Git dependency cache issues
+    echo ""
+    echo "🔄 Checking Git dependency cache..."
+    check_git_dependency_cache "$SELECTED_PUBSPEC"
+    
+    echo ""
+    echo "✅ Dependency analysis complete!"
+    echo ""
+fi
+
 if [ ${#ADDED_PACKAGES[@]} -gt 0 ]; then
     echo "✅ Successfully added ${#ADDED_PACKAGES[@]} packages:"
     for package in "${ADDED_PACKAGES[@]}"; do
