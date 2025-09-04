@@ -238,10 +238,14 @@ perform_selective_update() {
     if [ "$update_mode" = "all" ]; then
         # Update all changed files
         echo "📦 Updating all changed files..."
-        git pull origin "$BRANCH" >/dev/null 2>&1 || true
-        
-        local new_commit=$(git rev-parse HEAD 2>/dev/null | cut -c1-7)
-        echo "✅ **Update complete!** (now at commit: $new_commit)"
+        if git pull origin "$BRANCH" >/dev/null 2>&1; then
+            local new_commit=$(git rev-parse HEAD 2>/dev/null | cut -c1-7)
+            echo "✅ **Update complete!** (now at commit: $new_commit)"
+        else
+            echo "⚠️  Git pull encountered issues, but installation can continue"
+            local current_commit=$(git rev-parse HEAD 2>/dev/null | cut -c1-7)
+            echo "📍 Staying at current commit: $current_commit"
+        fi
         
         echo ""
         echo "📋 **Files updated:**"
@@ -253,7 +257,11 @@ perform_selective_update() {
     else
         # Selective file update (would require more complex git operations)
         echo "🎯 Selective file update not yet implemented, updating all..."
-        git pull origin "$BRANCH" >/dev/null 2>&1 || true
+        if git pull origin "$BRANCH" >/dev/null 2>&1; then
+            echo "✅ Update successful"
+        else
+            echo "⚠️  Git pull encountered issues"
+        fi
     fi
 }
 
