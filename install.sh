@@ -187,7 +187,7 @@ download_package_manager() {
         echo ""
         
         echo "Choose option (1-4, default: 1): "
-        read UPDATE_CHOICE
+        read UPDATE_CHOICE </dev/tty 2>/dev/null || UPDATE_CHOICE=1
         UPDATE_CHOICE=${UPDATE_CHOICE:-1}
         
         case "$UPDATE_CHOICE" in
@@ -201,7 +201,7 @@ download_package_manager() {
                 show_file_differences "$changed_files"
                 echo ""
                 echo "🔧 Apply updates now? (y/N): "
-                read APPLY_UPDATES
+                read APPLY_UPDATES </dev/tty 2>/dev/null || APPLY_UPDATES="N"
                 if [[ $APPLY_UPDATES =~ ^[Yy]$ ]]; then
                     perform_selective_update "$changed_files" "all"
                 fi
@@ -275,7 +275,7 @@ select_files_to_update() {
     
     echo ""
     echo "Enter file numbers (comma-separated, or 'all'): "
-    read FILE_SELECTION
+    read FILE_SELECTION </dev/tty 2>/dev/null || FILE_SELECTION="all"
     
     if [ "$FILE_SELECTION" = "all" ]; then
         perform_selective_update "$changed_files" "all"
@@ -377,7 +377,7 @@ run_immediately() {
     echo ""
     
     echo "Choose option (1-2, default: 1): "
-    read RUN_CHOICE </dev/tty
+    read RUN_CHOICE </dev/tty 2>/dev/null || RUN_CHOICE=1
     RUN_CHOICE=${RUN_CHOICE:-1}
     
     case "$RUN_CHOICE" in
