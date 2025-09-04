@@ -8,7 +8,7 @@ A cross-platform tool that transforms GitHub into your private package manager f
 
 #### 🚀 Install & Run Immediately
 ```bash
-curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.sh | bash
 ```
 
 #### 🏃 Run Directly (No Installation) 
