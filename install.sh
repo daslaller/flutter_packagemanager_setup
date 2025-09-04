@@ -136,13 +136,13 @@ download_package_manager() {
     if [ -d "$INSTALL_DIR/.git" ]; then
         echo "🔍 Analyzing existing installation for selective updates..."
         
-        cd "$INSTALL_DIR"
+        cd "$INSTALL_DIR" || { echo "❌ Could not access installation directory"; exit 1; }
         
         # Get current commit hash
         local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
         
         # Fetch latest changes to compare
-        git fetch origin "$BRANCH" >/dev/null 2>&1
+        git fetch origin "$BRANCH" >/dev/null 2>&1 || true
         local latest_commit=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "unknown")
         
         if [ "$current_commit" = "$latest_commit" ]; then
@@ -217,7 +217,7 @@ download_package_manager() {
                 ;;
         esac
         
-        cd - >/dev/null
+        cd - >/dev/null || true
     else
         echo "📂 Non-git installation detected, performing full replacement..."
         rm -rf "$INSTALL_DIR"
@@ -238,7 +238,7 @@ perform_selective_update() {
     if [ "$update_mode" = "all" ]; then
         # Update all changed files
         echo "📦 Updating all changed files..."
-        git pull origin "$BRANCH" >/dev/null 2>&1
+        git pull origin "$BRANCH" >/dev/null 2>&1 || true
         
         local new_commit=$(git rev-parse HEAD 2>/dev/null | cut -c1-7)
         echo "✅ **Update complete!** (now at commit: $new_commit)"
@@ -253,7 +253,7 @@ perform_selective_update() {
     else
         # Selective file update (would require more complex git operations)
         echo "🎯 Selective file update not yet implemented, updating all..."
-        git pull origin "$BRANCH" >/dev/null 2>&1
+        git pull origin "$BRANCH" >/dev/null 2>&1 || true
     fi
 }
 
@@ -384,7 +384,7 @@ run_immediately() {
         1)
             echo "🚀 Starting Flutter Package Manager..."
             echo ""
-            cd "$INSTALL_DIR"
+            cd "$INSTALL_DIR" || { echo "❌ Could not access installation directory"; exit 1; }
             exec bash "$SCRIPT_PATH"
             ;;
         2)
