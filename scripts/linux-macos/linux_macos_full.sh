@@ -199,10 +199,18 @@ select_project_source() {
     echo "3. Configure search settings"
     
     # Always show detected project option if pubspec.yaml exists in current or parent dirs
+    local has_git_deps=false
     if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
         local detected_dir="$(dirname "$DETECTED_PUBSPEC_PATH")"
         local detected_name="$(basename "$detected_dir")"
         echo "4. Use detected Flutter project: $detected_name [DEFAULT]"
+        
+        # Check if detected project has Git dependencies
+        if grep -A 3 "git:" "$DETECTED_PUBSPEC_PATH" >/dev/null 2>&1; then
+            echo "5. 🚀 Quick update Git packages in $detected_name (express mode)"
+            has_git_deps=true
+        fi
+        
         local default_choice="4"
     else
         local default_choice="1"
@@ -210,7 +218,9 @@ select_project_source() {
     echo ""
 
     while true; do
-        if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+        if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ] && [ "$has_git_deps" = "true" ]; then
+            read -p "Enter your choice (1-5, default: 4): " SOURCE_CHOICE </dev/tty
+        elif [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
             read -p "Enter your choice (1-4, default: 4): " SOURCE_CHOICE </dev/tty
         else
             read -p "Enter your choice (1-3): " SOURCE_CHOICE </dev/tty
@@ -247,8 +257,19 @@ echo "🔍 Selected: Local directory scan"
                     echo "❌ Current directory option not available."
                 fi
                 ;;
+            5)
+                if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ] && [ "$has_git_deps" = "true" ]; then
+                    echo "🚀 Selected: Express Git package update"
+                    PROJECT_SOURCE_CHOICE=5
+                    return 0
+                else
+                    echo "❌ Express Git update option not available."
+                fi
+                ;;
             *)
-                if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
+                if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ] && [ "$has_git_deps" = "true" ]; then
+                    echo "❌ Invalid choice. Please enter 1-5."
+                elif [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
                     echo "❌ Invalid choice. Please enter 1-4."
                 else
                     echo "❌ Invalid choice. Please enter 1-3."
@@ -775,6 +796,76 @@ add_pub_package_to_pubspec() {
     fi
     
     echo "  ✅ Added $package_name: $version"
+}
+
+# Function to update existing Git packages only
+update_existing_git_packages_only() {
+    echo ""
+    echo "🔍 Scanning pubspec.yaml for existing Git dependencies..."
+    
+    if [ ! -f "$SELECTED_PUBSPEC" ]; then
+        echo "❌ pubspec.yaml not found"
+        return 1
+    fi
+    
+    # Extract existing Git dependencies
+    local git_deps=$(mktemp)
+    awk '/^[[:space:]]*[^#]*:/{dep_name=$1; gsub(/:/, "", dep_name)} 
+         /^[[:space:]]*git:/{in_git=1; next} 
+         in_git && /^[[:space:]]*url:/{url=$2; gsub(/["]/, "", url)} 
+         in_git && /^[[:space:]]*ref:/{ref=$2; gsub(/["]/, "", ref)} 
+         in_git && /^[[:space:]]*[^[:space:]]/ && !/url:/ && !/ref:/ && !/path:/{
+             if(dep_name && url) {
+                 print dep_name ":" url ":" (ref ? ref : "main")
+                 dep_name=""; url=""; ref=""; in_git=0
+             }
+         }
+         /^[^[:space:]]/ && !/dependencies:/ && !/dependency_overrides:/{in_git=0}' "$SELECTED_PUBSPEC" > "$git_deps"
+    
+    if [ ! -s "$git_deps" ]; then
+        echo "ℹ️  No existing Git dependencies found in pubspec.yaml"
+        echo "   Try adding some Git packages first, then use this option to update them."
+        rm -f "$git_deps"
+        return 0
+    fi
+    
+    echo "📦 Found existing Git dependencies:"
+    while IFS=: read -r dep_name git_url git_ref; do
+        if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
+            echo "   • $dep_name from $git_url ($git_ref)"
+        fi
+    done < "$git_deps"
+    
+    echo ""
+    echo "🔄 Checking for updates and refreshing cache..."
+    echo ""
+    
+    # Use the existing cache refresh functionality
+    local project_dir="$(dirname "$SELECTED_PUBSPEC")"
+    cd "$project_dir"
+    
+    echo "🧹 Clearing Flutter pub cache to fetch latest commits..."
+    flutter pub cache clean > /dev/null 2>&1
+    
+    echo "📦 Re-fetching all Git dependencies..."
+    flutter pub get
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "✅ **All Git dependencies updated successfully!**"
+        echo ""
+        echo "🔍 **Summary:**"
+        while IFS=: read -r dep_name git_url git_ref; do
+            if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
+                echo "   ✅ $dep_name -> updated to latest $git_ref"
+            fi
+        done < "$git_deps"
+    else
+        echo "❌ Some dependencies failed to update - check for conflicts"
+    fi
+    
+    rm -f "$git_deps"
+    cd - >/dev/null 2>&1
 }
 
 # Function to detect package name from a repository's pubspec.yaml (via GitHub API)
@@ -2286,6 +2377,23 @@ while true; do
             # Current directory selected - no need to loop
             break
             ;;
+        5)
+            # Express Git package update - handle immediately
+            SELECTED_PUBSPEC="$DETECTED_PUBSPEC_PATH"
+            SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
+            echo ""
+            echo "🚀 **Express Git Package Update Mode**"
+            echo "======================================"
+            echo "📱 Using project: $SELECTED_PROJECT"
+            echo ""
+            
+            update_existing_git_packages_only
+            
+            echo ""
+            echo "✅ **Express update complete!**"
+            echo "🎯 Your Git packages are now at the latest commits - ready for development!"
+            exit 0
+            ;;
         *)
             break  # Exit loop for other choices
             ;;
@@ -2379,6 +2487,59 @@ elif [[ "$PROJECT_SOURCE_CHOICE" == "1" || "$PROJECT_SOURCE_CHOICE" == "2" ]] &&
     SELECTED_PUBSPEC="${FLUTTER_PROJECTS[$((PROJECT_NUM-1))]}"
     SELECTED_PROJECT=$(basename "$(dirname "$SELECTED_PUBSPEC")")
     echo "📱 Using project: $SELECTED_PROJECT"
+fi
+
+# Quick check for existing Git dependencies - offer fast update option
+if [ -n "$SELECTED_PUBSPEC" ] && [ -f "$SELECTED_PUBSPEC" ]; then
+    # Check if there are any Git dependencies
+    if grep -A 3 "git:" "$SELECTED_PUBSPEC" >/dev/null 2>&1; then
+        echo ""
+        echo "🔄 **Git Dependencies Detected!**"
+        echo ""
+        echo "Found existing Git packages in your project. Since you're iterating often on your own repos:"
+        echo ""
+        echo "📋 **Quick Actions:**"
+        echo "1. 🚀 Just update my Git packages (fastest - skip all setup)"
+        echo "2. ➕ Add new packages (continue with full workflow)"  
+        echo "3. 🔄 Update existing + add new packages"
+        echo ""
+        
+        echo "Choose option (1-3, default: 1): "
+        read QUICK_ACTION </dev/tty
+        QUICK_ACTION=${QUICK_ACTION:-1}
+        
+        case "$QUICK_ACTION" in
+            1)
+                echo ""
+                echo "🚀 **Express Git Package Update**"
+                echo "================================="
+                update_existing_git_packages_only
+                echo ""
+                echo "✅ **Quick update complete!** Your Git packages are now at the latest commits."
+                echo ""
+                echo "🎯 Ready to continue development with updated dependencies!"
+                exit 0
+                ;;
+            2)
+                echo ""
+                echo "➕ **Continuing with full workflow to add new packages...**"
+                # Continue with normal flow
+                ;;
+            3)
+                echo ""
+                echo "🔄 **Express Update + New Package Addition**"
+                echo "=========================================="
+                update_existing_git_packages_only
+                echo ""
+                echo "✅ Existing packages updated! Now continuing to add new packages..."
+                echo ""
+                # Continue with normal flow
+                ;;
+            *)
+                echo "⚠️  Invalid choice, continuing with full workflow..."
+                ;;
+        esac
+    fi
 fi
 
 # Validate the selected project structure
@@ -2479,6 +2640,7 @@ if [ -n "$SELECTED_PUBSPEC" ]; then
     echo "⚡ **Ready for manual package selection!**"
     echo ""
 fi
+
 
 clear
 echo "📋 Select repositories to add as packages:"
