@@ -586,6 +586,79 @@ dependency_block_matches() {
     return 0
 }
 
+# Function to check if newer commits are available for a Git dependency
+check_for_newer_commits() {
+    local repo_url="$1"
+    local ref="$2"  
+    local package_name="$3"
+    
+    # Only check GitHub repositories
+    if [[ "$repo_url" != *"github.com"* ]]; then
+        echo "   ⚠️  Non-GitHub repository - cannot check for updates"
+        return 1
+    fi
+    
+    # Extract repo path from GitHub URL
+    local repo_path=$(echo "$repo_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
+    
+    # Get latest commit hash from GitHub API
+    echo -n "   🔍 Checking latest commit on $ref"
+    local latest_commit=$(curl -s "https://api.github.com/repos/$repo_path/commits/$ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7)
+    echo " -> $latest_commit"
+    
+    if [ -z "$latest_commit" ] || [ "$latest_commit" = "null" ]; then
+        echo "   ⚠️  Could not fetch latest commit info"
+        return 1
+    fi
+    
+    # Check Flutter's pub cache for this dependency
+    local cache_dir=""
+    if [ -d "$HOME/.pub-cache/git" ]; then
+        cache_dir="$HOME/.pub-cache/git"
+    elif [ -d "$HOME/AppData/Local/Pub/Cache/git" ]; then  # Windows
+        cache_dir="$HOME/AppData/Local/Pub/Cache/git"
+    fi
+    
+    if [ -z "$cache_dir" ]; then
+        echo "   ⚠️  Pub cache directory not found - assuming update needed"
+        return 0
+    fi
+    
+    # Look for cached version of this repo
+    local repo_hash=$(echo "$repo_url" | shasum | cut -c1-8)
+    local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
+    
+    if [ -z "$cached_paths" ]; then
+        echo "   📥 Package not cached yet - will fetch latest"
+        return 0
+    fi
+    
+    # Check cached commit
+    local cached_commit=""
+    for cached_path in $cached_paths; do
+        if [ -d "$cached_path/.git" ]; then
+            cached_commit=$(cd "$cached_path" && git rev-parse HEAD 2>/dev/null | cut -c1-7)
+            break
+        fi
+    done
+    
+    if [ -z "$cached_commit" ]; then
+        echo "   ⚠️  Could not determine cached commit - assuming update needed"
+        return 0
+    fi
+    
+    echo "   📋 Cached: $cached_commit | Latest: $latest_commit"
+    
+    # Compare commits
+    if [ "$cached_commit" != "$latest_commit" ]; then
+        echo "   🔄 NEWER COMMITS AVAILABLE!"
+        return 0
+    else
+        echo "   ✅ Already at latest commit"
+        return 1
+    fi
+}
+
 # Function to detect package name from a repository's pubspec.yaml (via GitHub API)
 get_repo_pubspec_name() {
     local repo_full_name="$1"
@@ -625,8 +698,16 @@ add_package_to_pubspec() {
         local existing_block
         existing_block="$(get_dependency_block "$PUBSPEC_PATH" "$PACKAGE_NAME")"
         if dependency_block_matches "$existing_block" "$REPO_URL" "$REF" "$LOCAL_PATH"; then
-            echo "ℹ️  Package $PACKAGE_NAME is already up-to-date"
-            return 0
+            # Check if there are newer commits available on this ref
+            echo "🔍 Package configuration matches, checking for newer commits..."
+            if check_for_newer_commits "$REPO_URL" "$REF" "$PACKAGE_NAME"; then
+                echo "⚠️  Found newer commits! Package will be updated to fetch latest version."
+                # Continue to update the package (remove and re-add)
+                remove_dependency_block "$PUBSPEC_PATH" "$PACKAGE_NAME"
+            else
+                echo "ℹ️  Package $PACKAGE_NAME is already up-to-date"
+                return 0
+            fi
         fi
         echo "⚠️  Package $PACKAGE_NAME already exists in pubspec.yaml with different settings"
         read -p "Replace it with the new url/ref/path? (Y/n): " REPLACE </dev/tty
