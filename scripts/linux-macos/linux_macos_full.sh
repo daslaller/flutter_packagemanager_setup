@@ -232,7 +232,9 @@ configure_search_settings() {
 # Intelligent project source selection with smart defaults
 select_project_source() {
     echo "📱 Flutter Package Manager - Main Menu:"
-    echo "1. Scan directories  2. GitHub repo  3. Configure search"
+    echo "1. Scan directories"
+    echo "2. GitHub repo" 
+    echo "3. Configure search"
     
     local has_git_deps=false
     local default_choice="1"
