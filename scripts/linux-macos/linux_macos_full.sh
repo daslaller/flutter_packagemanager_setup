@@ -659,6 +659,124 @@ check_for_newer_commits() {
     fi
 }
 
+# Function to deploy smart recommendations interactively
+deploy_smart_recommendations() {
+    local project_dir="$1"
+    
+    # Get available smart recommendations in a deployable format
+    echo "🔍 Preparing recommended packages for deployment..."
+    
+    # Create array of top recommended packages 
+    SMART_PACKAGES=()
+    SMART_PACKAGES+=("riverpod:^2.4.0:pub:State management with elegant reactive architecture")
+    SMART_PACKAGES+=("hive:^2.2.3:pub:Lightweight NoSQL database with excellent performance") 
+    SMART_PACKAGES+=("dio:^5.3.0:pub:Powerful HTTP client with interceptors and clean API")
+    SMART_PACKAGES+=("go_router:^12.0.0:pub:Declarative routing with type-safe navigation")
+    SMART_PACKAGES+=("firebase_auth:^4.12.0:pub:Comprehensive authentication solution")
+    SMART_PACKAGES+=("reactive_forms:^16.1.1:pub:Reactive programming for forms with elegant validation")
+    SMART_PACKAGES+=("cached_network_image:^3.3.0:pub:Intelligent image caching with loading states")
+    SMART_PACKAGES+=("logger:^2.0.1:pub:Beautiful colored logs with filtering and formatting")
+    SMART_PACKAGES+=("flutter_animate:^4.2.0:pub:Declarative animations with incredible ease of use")
+    SMART_PACKAGES+=("get_it:^7.6.0:pub:Service locator pattern for dependency injection")
+    
+    if [ ${#SMART_PACKAGES[@]} -eq 0 ]; then
+        echo "❌ No smart recommendations available for deployment"
+        return 1
+    fi
+    
+    echo "📦 Found ${#SMART_PACKAGES[@]} top-tier packages available for quick deployment"
+    echo ""
+    echo "🎯 **Select packages to add:** (SPACE to select, ENTER to confirm)"
+    echo ""
+    
+    # Create display options for multiselect
+    local options=()
+    for package_info in "${SMART_PACKAGES[@]}"; do
+        IFS=: read -r pkg_name version source description <<< "$package_info"
+        options+=("$pkg_name (v$version) - $description")
+    done
+    
+    # Use multiselect to let user choose packages
+    local selected_indices
+    selected_indices=$(multiselect "${options[@]}")
+    
+    if [ -z "$selected_indices" ]; then
+        echo "❌ No packages selected"
+        return 0
+    fi
+    
+    echo ""
+    echo "🚀 **Deploying selected packages...**"
+    echo ""
+    
+    # Convert selected indices to array and process each selection
+    local selected_count=0
+    for index in $selected_indices; do
+        if [ "$index" -ge 0 ] && [ "$index" -lt "${#SMART_PACKAGES[@]}" ]; then
+            IFS=: read -r pkg_name version source description <<< "${SMART_PACKAGES[$index]}"
+            
+            echo "📦 Adding $pkg_name..."
+            
+            if [ "$source" = "pub" ]; then
+                # Add pub.dev package to pubspec.yaml
+                add_pub_package_to_pubspec "$SELECTED_PUBSPEC" "$pkg_name" "$version"
+            else
+                # For Git packages (future expansion)
+                echo "⚠️  Git packages not yet supported in smart deployment"
+            fi
+            
+            selected_count=$((selected_count + 1))
+        fi
+    done
+    
+    echo ""
+    echo "✅ Successfully deployed $selected_count recommended packages!"
+    
+    # Run flutter pub get to install the new packages
+    echo ""
+    echo "📦 Installing new packages..."
+    local project_dir_path="$(dirname "$SELECTED_PUBSPEC")"
+    cd "$project_dir_path"
+    flutter pub get
+    echo "✅ Package installation complete!"
+}
+
+# Function to add pub.dev package to pubspec.yaml
+add_pub_package_to_pubspec() {
+    local pubspec_path="$1" 
+    local package_name="$2"
+    local version="$3"
+    
+    # Check if package already exists
+    if grep -q "^[[:space:]]*$package_name:" "$pubspec_path"; then
+        echo "ℹ️  Package $package_name already exists in pubspec.yaml"
+        return 0
+    fi
+    
+    # Backup original file
+    cp "$pubspec_path" "$pubspec_path.backup" 2>/dev/null
+    
+    # Add package to dependencies section
+    if grep -q "^dependencies:" "$pubspec_path"; then
+        # Insert after dependencies: line
+        awk -v pkg="$package_name" -v ver="$version" '
+        /^dependencies:/ {
+            print $0
+            print "  " pkg ": " ver
+            next
+        }
+        { print }
+        ' "$pubspec_path" > "$pubspec_path.tmp" && mv "$pubspec_path.tmp" "$pubspec_path"
+    else
+        # Add dependencies section
+        echo "" >> "$pubspec_path"
+        echo "dependencies:" >> "$pubspec_path"  
+        echo "  $package_name: $version" >> "$pubspec_path"
+    fi
+    
+    echo "  ✅ Added $package_name: $version"
+}
+
 # Function to detect package name from a repository's pubspec.yaml (via GitHub API)
 get_repo_pubspec_name() {
     local repo_full_name="$1"
@@ -2317,10 +2435,49 @@ if [ -n "$SELECTED_PUBSPEC" ]; then
     analyze_code_patterns "$project_dir"
     
     echo ""
-    echo "⚡ **Ready to add packages!** The recommendations above will help you choose wisely."
+    echo "🤔 **Would you like to add any of the recommended packages?**"
     echo ""
-    echo "Press Enter to continue to package selection..."
-    read -p "" CONTINUE_TO_SELECTION </dev/tty
+    echo "📋 **Options:**"
+    echo "1. ✅ Yes - let me select from recommended packages"
+    echo "2. ⏭️  Skip recommendations - go straight to manual selection"
+    echo "3. 🚫 Skip all - exit without adding packages"
+    echo ""
+    
+    echo "Choose option (1-3, default: 1): "
+    read RECOMMENDATION_CHOICE </dev/tty
+    RECOMMENDATION_CHOICE=${RECOMMENDATION_CHOICE:-1}
+    
+    case "$RECOMMENDATION_CHOICE" in
+        1)
+            echo ""
+            echo "🎯 **Smart Package Deployment**"
+            echo "==============================" 
+            deploy_smart_recommendations "$project_dir"
+            echo ""
+            echo "✅ Recommended packages processed!"
+            echo ""
+            echo "Continue to manual package selection? (Y/n): "
+            read CONTINUE_MANUAL </dev/tty
+            if [[ "$CONTINUE_MANUAL" =~ ^[Nn]$ ]]; then
+                echo "✅ Package management complete!"
+                exit 0
+            fi
+            ;;
+        2)
+            echo "⏭️  Skipping recommended packages..."
+            ;;
+        3)
+            echo "👋 Goodbye!"
+            exit 0
+            ;;
+        *)
+            echo "⏭️  Invalid choice, continuing to manual selection..."
+            ;;
+    esac
+    
+    echo ""
+    echo "⚡ **Ready for manual package selection!**"
+    echo ""
 fi
 
 clear
