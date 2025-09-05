@@ -118,6 +118,8 @@ analyze_code_patterns() {
     
     # setState Pattern Detection
     local setState_count=$(grep -c "setState(" "$temp_analysis" 2>/dev/null || echo "0")
+    setState_count=$(echo "$setState_count" | tr -d '[:space:]')
+    setState_count=${setState_count:-0}
     if [ "$setState_count" -gt 0 ]; then
         found_patterns[${#found_patterns[@]}]="setState_pattern:$setState_count"
         echo "🔄 State Management: Found $setState_count setState() calls"
@@ -125,6 +127,8 @@ analyze_code_patterns() {
     
     # SharedPreferences Pattern Detection  
     local prefs_count=$(grep -c "SharedPreferences" "$temp_analysis" 2>/dev/null || echo "0")
+    prefs_count=$(echo "$prefs_count" | tr -d '[:space:]')
+    prefs_count=${prefs_count:-0}
     if [ "$prefs_count" -gt 0 ]; then
         found_patterns[${#found_patterns[@]}]="SharedPreferences_pattern:$prefs_count"
         echo "💾 Local Storage: Found $prefs_count SharedPreferences usages"
