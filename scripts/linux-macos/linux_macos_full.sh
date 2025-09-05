@@ -411,7 +411,7 @@ fetch_from_user_repos() {
     # Smart repository selection
     local SELECTED_INDICES=()
     multiselect "Select repository to clone:" "REPO_OPTIONS" "SELECTED_INDICES" true
-    ensure_tty_ready
+    stty echo icanon 2>/dev/null || true
     
     [ ${#SELECTED_INDICES[@]} -eq 0 ] && { echo "❌ No selection"; return 1; }
     
@@ -2551,15 +2551,19 @@ clear
 
 # Use multiselect function
 SELECTED_INDICES=()
+echo "DEBUG: About to call multiselect with ${#REPO_OPTIONS[@]} options"
 multiselect "Select repositories (SPACE to select, ENTER to confirm):" "REPO_OPTIONS" "SELECTED_INDICES" false true
+echo "DEBUG: Multiselect returned, selected indices: ${SELECTED_INDICES[*]}"
 
 # Restore terminal to cooked mode before next prompts
-ensure_tty_ready
+stty echo icanon 2>/dev/null || true
 
 if [ ${#SELECTED_INDICES[@]} -eq 0 ]; then
     echo "❌ No repositories selected"
     exit 1
 fi
+
+echo "DEBUG: Processing ${#SELECTED_INDICES[@]} selected repositories"
 
 echo "📦 Selected ${#SELECTED_INDICES[@]} repositories:"
 SELECTED_REPOS=()
@@ -2603,7 +2607,7 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     fi
 
     # Ensure TTY is ready for input prompts
-    ensure_tty_ready
+    stty echo icanon 2>/dev/null || true
     
     echo ""
     echo "Specify branch/tag (default: main): "
@@ -2652,7 +2656,7 @@ for REPO_FULL_NAME in "${SELECTED_REPOS[@]}"; do
     fi
 
     # Ask for package name with detected default
-    ensure_tty_ready
+    stty echo icanon 2>/dev/null || true
     echo ""
     echo "Package name for $REPO_FULL_NAME (default: $DEFAULT_PACKAGE_NAME): "
     read PACKAGE_NAME </dev/tty
