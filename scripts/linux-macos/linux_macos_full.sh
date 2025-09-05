@@ -744,10 +744,37 @@ update_existing_git_packages_only() {
         echo ""
         echo "✅ **All Git dependencies updated successfully!**"
         echo ""
-        echo "🔍 **Summary:**"
+        echo "🔍 **Verification - checking actual cached commits:**"
         while IFS=: read -r dep_name git_url git_ref; do
             if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
-                echo "   ✅ $dep_name -> updated to latest $git_ref"
+                # Get actual cached commit for verification
+                local cache_dir=""
+                if [ -d "$HOME/.pub-cache/git" ]; then
+                    cache_dir="$HOME/.pub-cache/git"
+                elif [ -d "$HOME/AppData/Local/Pub/Cache/git" ]; then
+                    cache_dir="$HOME/AppData/Local/Pub/Cache/git"
+                fi
+                
+                if [ -n "$cache_dir" ]; then
+                    local repo_hash=$(echo "$git_url" | shasum | cut -c1-8 2>/dev/null)
+                    local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
+                    local actual_commit=""
+                    
+                    for cached_path in $cached_paths; do
+                        if [ -d "$cached_path/.git" ]; then
+                            actual_commit=$(cd "$cached_path" && git rev-parse HEAD 2>/dev/null | cut -c1-7)
+                            break
+                        fi
+                    done
+                    
+                    if [ -n "$actual_commit" ]; then
+                        echo "   ✅ $dep_name -> $actual_commit ($git_ref)"
+                    else
+                        echo "   ❓ $dep_name -> could not verify commit ($git_ref)"
+                    fi
+                else
+                    echo "   ✅ $dep_name -> updated to latest $git_ref"
+                fi
             fi
         done < "$git_deps"
     else
@@ -1576,10 +1603,44 @@ refresh_git_dependency_cache() {
         if [ $? -eq 0 ]; then
             echo "✅ **All Git dependencies refreshed successfully!**"
             echo ""
-            echo "📋 **Verification - latest commits now cached:**"
+            echo "🔍 **Verifying updated commits:**"
+            
+            # Actually verify the commits after update
             for stale_info in "${stale_deps[@]}"; do
                 IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
-                echo "   $dep_name: $cached_commit → $latest_commit ✨"
+                
+                # Find the actual cached commit after update
+                local cache_dir=""
+                if [ -d "$HOME/.pub-cache/git" ]; then
+                    cache_dir="$HOME/.pub-cache/git"
+                elif [ -d "$HOME/AppData/Local/Pub/Cache/git" ]; then
+                    cache_dir="$HOME/AppData/Local/Pub/Cache/git"
+                fi
+                
+                if [ -n "$cache_dir" ]; then
+                    local repo_hash=$(echo "$git_url" | shasum | cut -c1-8 2>/dev/null)
+                    local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
+                    local actual_commit=""
+                    
+                    for cached_path in $cached_paths; do
+                        if [ -d "$cached_path/.git" ]; then
+                            actual_commit=$(cd "$cached_path" && git rev-parse HEAD 2>/dev/null | cut -c1-7)
+                            break
+                        fi
+                    done
+                    
+                    if [ -n "$actual_commit" ]; then
+                        if [ "$actual_commit" = "$latest_commit" ]; then
+                            echo "   ✅ $dep_name: $cached_commit → $actual_commit (SUCCESS)"
+                        else
+                            echo "   ⚠️  $dep_name: $cached_commit → $actual_commit (expected $latest_commit)"
+                        fi
+                    else
+                        echo "   ❓ $dep_name: Could not verify cached commit"
+                    fi
+                else
+                    echo "   ❓ $dep_name: Cache directory not found"
+                fi
             done
         else
             echo "❌ Failed to refresh dependencies - check for conflicts"
@@ -2197,7 +2258,7 @@ while true; do
             echo "📱 Using project: $SELECTED_PROJECT"
             echo ""
             
-            update_existing_git_packages_only
+            check_git_dependency_cache "$SELECTED_PUBSPEC"
             
             echo ""
             echo "✅ **Express update complete!**"
@@ -2323,7 +2384,7 @@ if [ -n "$SELECTED_PUBSPEC" ] && [ -f "$SELECTED_PUBSPEC" ]; then
                 echo ""
                 echo "🚀 **Express Git Package Update**"
                 echo "================================="
-                update_existing_git_packages_only
+                check_git_dependency_cache "$SELECTED_PUBSPEC"
                 echo ""
                 echo "✅ **Quick update complete!** Your Git packages are now at the latest commits."
                 echo ""
@@ -2339,7 +2400,7 @@ if [ -n "$SELECTED_PUBSPEC" ] && [ -f "$SELECTED_PUBSPEC" ]; then
                 echo ""
                 echo "🔄 **Express Update + New Package Addition**"
                 echo "=========================================="
-                update_existing_git_packages_only
+                check_git_dependency_cache "$SELECTED_PUBSPEC"
                 echo ""
                 echo "✅ Existing packages updated! Now continuing to add new packages..."
                 echo ""
