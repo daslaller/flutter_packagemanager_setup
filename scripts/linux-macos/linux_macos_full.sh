@@ -410,7 +410,7 @@ fetch_from_user_repos() {
     
     # Smart repository selection
     local SELECTED_INDICES=()
-    multiselect "Select repository to clone:" REPO_OPTIONS SELECTED_INDICES true
+    multiselect "Select repository to clone:" "REPO_OPTIONS" "SELECTED_INDICES" true
     ensure_tty_ready
     
     [ ${#SELECTED_INDICES[@]} -eq 0 ] && { echo "❌ No selection"; return 1; }
@@ -633,7 +633,7 @@ deploy_smart_recommendations() {
     
     # Interactive selection
     local selected_indices=()
-    multiselect "Select packages to add:" options selected_indices false
+    multiselect "Select packages to add:" "options" "selected_indices" false
     
     [ ${#selected_indices[@]} -eq 0 ] && { echo "❌ No selection"; return 0; }
     
@@ -2402,9 +2402,20 @@ if [ -n "$SELECTED_PUBSPEC" ] && [ -f "$SELECTED_PUBSPEC" ]; then
                 echo "=========================================="
                 check_git_dependency_cache "$SELECTED_PUBSPEC"
                 echo ""
-                echo "✅ Existing packages updated! Now continuing to add new packages..."
+                echo "✅ Existing packages updated!"
                 echo ""
-                # Continue with normal flow
+                read -t 10 -p "Continue to add new packages? (Y/n, auto-yes in 10s): " add_new </dev/tty 2>/dev/null || add_new="y"
+                case "${add_new:-y}" in
+                    [Nn]*)
+                        echo "✅ Express update complete! Exiting."
+                        exit 0
+                        ;;
+                    *)
+                        echo "➕ Continuing to add new packages..."
+                        echo ""
+                        # Continue with normal flow
+                        ;;
+                esac
                 ;;
             *)
                 echo "⚠️  Invalid choice, continuing with full workflow..."
@@ -2424,11 +2435,20 @@ fi
 echo ""
 echo "🔍 Fetching your repositories..."
 
-# Get repository data as JSON for processing
-REPO_JSON=$(gh repo list --limit 100 --json name,owner,isPrivate,url,description)
+# Get repository data as JSON for processing with error handling
+REPO_JSON=""
+if command -v gh >/dev/null 2>&1; then
+    REPO_JSON=$(gh repo list --limit 100 --json name,owner,isPrivate,url,description 2>/dev/null || echo "[]")
+else
+    echo "❌ GitHub CLI not found. Please install gh CLI first:"
+    echo "   brew install gh  # macOS"
+    echo "   sudo apt install gh  # Ubuntu/Debian"
+    exit 1
+fi
 
 if [ -z "$REPO_JSON" ] || [ "$REPO_JSON" = "[]" ]; then
-    echo "❌ No repositories found"
+    echo "❌ No repositories found or GitHub CLI not authenticated"
+    echo "💡 Try running: gh auth login"
     exit 1
 fi
 
@@ -2531,7 +2551,7 @@ clear
 
 # Use multiselect function
 SELECTED_INDICES=()
-multiselect "Select repositories (SPACE to select, ENTER to confirm):" REPO_OPTIONS SELECTED_INDICES false true
+multiselect "Select repositories (SPACE to select, ENTER to confirm):" "REPO_OPTIONS" "SELECTED_INDICES" false true
 
 # Restore terminal to cooked mode before next prompts
 ensure_tty_ready
