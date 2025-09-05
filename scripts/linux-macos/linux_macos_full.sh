@@ -8,6 +8,19 @@ set -e
 # Ensure terminal is properly restored on exit
 trap 'stty echo icanon </dev/tty 2>/dev/null || true' EXIT
 
+# Function to show dotted progress indicator
+show_progress() {
+    local message="$1"
+    local pid="$2"
+    
+    echo -n "$message"
+    while kill -0 "$pid" 2>/dev/null; do
+        echo -n "."
+        sleep 0.5
+    done
+    echo ""
+}
+
 echo "📦 Flutter Package Manager"
 echo "=========================="
 
@@ -751,8 +764,14 @@ check_and_resolve_dependency_conflicts() {
     
     # Run pub get and capture output
     cd "$project_dir"
-    echo "   📦 Running dependency resolution..."
-    if ! flutter pub get > "$temp_output" 2>&1; then
+    echo -n "   📦 Running dependency resolution"
+    flutter pub get > "$temp_output" 2>&1 &
+    local flutter_pid=$!
+    show_progress "" $flutter_pid
+    wait $flutter_pid
+    local flutter_exit_code=$?
+    
+    if [ $flutter_exit_code -ne 0 ]; then
         local pub_output=$(cat "$temp_output")
         
         # Check for version solving failures
@@ -1322,9 +1341,14 @@ check_git_dependency_cache() {
             if [[ "$git_url" == *"github.com"* ]]; then
                 local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
                 
-                echo "     🔍 Checking latest commit via GitHub API..."
+                echo -n "     🔍 Checking latest commit via GitHub API"
                 # Get latest commit hash for the branch/ref
-                local latest_commit=$(curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7)
+                curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7 > /tmp/latest_commit_$$ &
+                local curl_pid=$!
+                show_progress "" $curl_pid
+                wait $curl_pid
+                local latest_commit=$(cat /tmp/latest_commit_$$ 2>/dev/null)
+                rm -f /tmp/latest_commit_$$
                 
                 if [ -n "$latest_commit" ] && [ "$latest_commit" != "null" ]; then
                     echo "     Latest commit: $latest_commit"
@@ -1338,10 +1362,15 @@ check_git_dependency_cache() {
                     fi
                     
                     if [ -n "$cache_dir" ]; then
-                        echo "     🔍 Scanning local pub cache..."
+                        echo -n "     🔍 Scanning local pub cache"
                         # Look for cached version of this repo
                         local repo_hash=$(echo "$git_url" | shasum | cut -c1-8)
-                        local cached_paths=$(find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null)
+                        find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null > /tmp/cached_paths_$$ &
+                        local find_pid=$!
+                        show_progress "" $find_pid
+                        wait $find_pid
+                        local cached_paths=$(cat /tmp/cached_paths_$$ 2>/dev/null)
+                        rm -f /tmp/cached_paths_$$
                         
                         if [ -n "$cached_paths" ]; then
                             local cached_commit=""
@@ -2199,7 +2228,7 @@ echo ""
 
 # Analyze the selected project for smart recommendations
 if [ -n "$SELECTED_PUBSPEC" ]; then
-    local project_dir="$(dirname "$SELECTED_PUBSPEC")"
+    project_dir="$(dirname "$SELECTED_PUBSPEC")"
     echo "📊 Analyzing your Flutter project for intelligent package suggestions..."
     echo ""
     
@@ -2425,8 +2454,11 @@ if [ "$(dirname "$SELECTED_PUBSPEC")" = "." ]; then
     echo ""
     read -p "Run 'flutter pub get' now? (y/N): " RUN_PUB_GET </dev/tty
     if [[ $RUN_PUB_GET =~ ^[Yy]$ ]]; then
-        echo "📦 Running flutter pub get..."
-        flutter pub get
+        echo -n "📦 Running flutter pub get"
+        flutter pub get > /dev/null 2>&1 &
+        local pub_get_pid=$!
+        show_progress "" $pub_get_pid
+        wait $pub_get_pid
         echo "✅ Dependencies installed!"
     fi
 fi

@@ -123,13 +123,22 @@ download_package_manager() {
     echo ""
     echo "📥 Downloading Flutter Package Manager..."
     
-    # Create install directory
+    # Create install directory with proper error handling
     if [ ! -d "$INSTALL_DIR" ]; then
-        mkdir -p "$INSTALL_DIR"
         echo "📥 Fresh installation detected"
-        git clone "$REPO_URL" "$INSTALL_DIR"
-        echo "✅ Download complete"
-        return 0
+        if mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+            if git clone "$REPO_URL" "$INSTALL_DIR" 2>/dev/null; then
+                echo "✅ Download complete"
+                return 0
+            else
+                echo "❌ Git clone failed"
+                rm -rf "$INSTALL_DIR" 2>/dev/null
+                exit 1
+            fi
+        else
+            echo "❌ Could not create installation directory"
+            exit 1
+        fi
     fi
     
     # Smart update detection for existing installation
@@ -220,9 +229,14 @@ download_package_manager() {
         cd - >/dev/null || true
     else
         echo "📂 Non-git installation detected, performing full replacement..."
-        rm -rf "$INSTALL_DIR"
-        git clone "$REPO_URL" "$INSTALL_DIR"
-        echo "✅ Fresh installation complete"
+        if [ -n "$INSTALL_DIR" ] && [ "$INSTALL_DIR" != "/" ] && [ "$INSTALL_DIR" != "$HOME" ]; then
+            rm -rf "$INSTALL_DIR"
+            git clone "$REPO_URL" "$INSTALL_DIR"
+            echo "✅ Fresh installation complete"
+        else
+            echo "❌ Safety check failed: Invalid INSTALL_DIR"
+            exit 1
+        fi
     fi
 }
 
