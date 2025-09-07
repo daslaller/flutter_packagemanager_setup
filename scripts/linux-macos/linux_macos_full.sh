@@ -706,7 +706,7 @@ update_existing_git_packages_only() {
          in_git && /^[[:space:]]*ref:/{ref=$2; gsub(/["]/, "", ref)} 
          in_git && /^[[:space:]]*[^[:space:]]/ && !/url:/ && !/ref:/ && !/path:/{
              if(dep_name && url) {
-                 print dep_name ":" url ":" (ref ? ref : "main")
+                 print dep_name "|" url "|" (ref ? ref : "main")
                  dep_name=""; url=""; ref=""; in_git=0
              }
          }
@@ -720,7 +720,7 @@ update_existing_git_packages_only() {
     fi
     
     echo "📦 Found existing Git dependencies:"
-    while IFS=: read -r dep_name git_url git_ref; do
+    while IFS=\| read -r dep_name git_url git_ref; do
         if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
             echo "   • $dep_name from $git_url ($git_ref)"
         fi
@@ -745,7 +745,7 @@ update_existing_git_packages_only() {
         echo "✅ **All Git dependencies updated successfully!**"
         echo ""
         echo "🔍 **Verification - checking actual cached commits:**"
-        while IFS=: read -r dep_name git_url git_ref; do
+        while IFS=\| read -r dep_name git_url git_ref; do
             if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
                 # Get actual cached commit for verification
                 local cache_dir=""
@@ -1443,7 +1443,7 @@ check_git_dependency_cache() {
          in_git && /^[[:space:]]*ref:/{ref=$2; gsub(/["]/, "", ref)} 
          in_git && /^[[:space:]]*[^[:space:]]/ && !/url:/ && !/ref:/ && !/path:/{
              if(dep_name && url) {
-                 print dep_name ":" url ":" (ref ? ref : "main")
+                 print dep_name "|" url "|" (ref ? ref : "main")
                  dep_name=""; url=""; ref=""; in_git=0
              }
          }
@@ -1460,7 +1460,7 @@ check_git_dependency_cache() {
     local has_stale_deps=false
     local stale_deps=()
     
-    while IFS=: read -r dep_name git_url git_ref; do
+    while IFS=\| read -r dep_name git_url git_ref; do
         if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
             echo "   $dep_name ($git_ref) from $git_url"
             
@@ -1514,7 +1514,7 @@ check_git_dependency_cache() {
                                 if [ "$cached_commit" != "$latest_commit" ]; then
                                     echo "     🔄 STALE - newer commits available!"
                                     has_stale_deps=true
-                                    stale_deps+=("$dep_name:$git_url:$git_ref:$cached_commit:$latest_commit")
+                                    stale_deps+=("$dep_name|$git_url|$git_ref|$cached_commit|$latest_commit")
                                 else
                                     echo "     ✅ Up to date"
                                 fi
@@ -1607,7 +1607,7 @@ refresh_git_dependency_cache() {
             
             # Actually verify the commits after update
             for stale_info in "${stale_deps[@]}"; do
-                IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+                IFS=\| read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
                 
                 # Find the actual cached commit after update
                 local cache_dir=""
@@ -1669,7 +1669,7 @@ select_packages_to_refresh() {
     local i=1
     
     for stale_info in "${stale_deps[@]}"; do
-        IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+        IFS=\| read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
         echo "$i. $dep_name ($cached_commit → $latest_commit)"
         i=$((i+1))
     done
@@ -1696,7 +1696,7 @@ show_detailed_cache_info() {
     echo "=============================================="
     
     for stale_info in "${stale_deps[@]}"; do
-        IFS=: read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
+        IFS=\| read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
         
         echo ""
         echo "📦 **$dep_name**"
