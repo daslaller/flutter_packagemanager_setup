@@ -235,21 +235,24 @@ select_project_source() {
     echo "1. Scan directories"
     echo "2. GitHub repo" 
     echo "3. Configure search"
+    echo "6. 🔄 Check for Flutter-PM updates"
     
     local has_git_deps=false
     local default_choice="1"
-    local max_choice=3
+    local max_choice=6
     
     if [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ]; then
         local detected_name="$(basename "$(dirname "$DETECTED_PUBSPEC_PATH")")"
         echo "4. Use detected: $detected_name [DEFAULT]"
         default_choice="4"
-        max_choice=4
+        max_choice=6
         
         if grep -q "git:" "$DETECTED_PUBSPEC_PATH" 2>/dev/null; then
             echo "5. 🚀 Express Git update for $detected_name"
             has_git_deps=true
-            max_choice=5
+            max_choice=6
+        else
+            max_choice=6
         fi
     fi
     
@@ -262,6 +265,7 @@ select_project_source() {
         3) echo "⚙️  Configure"; PROJECT_SOURCE_CHOICE=3 ;;
         4) [ "$LOCAL_PUBSPEC_AVAILABLE" = "true" ] && { echo "📱 Detected project"; PROJECT_SOURCE_CHOICE=4; } || { echo "❌ No detected project"; select_project_source; return; } ;;
         5) [ "$has_git_deps" = "true" ] && { echo "🚀 Express update"; PROJECT_SOURCE_CHOICE=5; } || { echo "❌ No Git deps"; select_project_source; return; } ;;
+        6) echo "🔄 Update check"; PROJECT_SOURCE_CHOICE=6 ;;
         *) echo "❌ Invalid: $SOURCE_CHOICE"; select_project_source; return ;;
     esac
 }
@@ -2214,6 +2218,96 @@ authenticate_github() {
     fi
 }
 
+# Function to check for Flutter-PM updates
+check_flutter_pm_updates() {
+    echo ""
+    echo "🔄 **Flutter Package Manager Update Check**"
+    echo "=========================================="
+    echo ""
+    
+    echo "🔍 Checking for updates to Flutter-PM..."
+    
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "❌ Flutter-PM is not installed from a Git repository"
+        echo "💡 To enable updates, reinstall using the Git installation method"
+        echo ""
+        return 1
+    fi
+    
+    # Get current branch and commit
+    local current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+    local current_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    
+    echo "📍 Current branch: $current_branch"
+    echo "📍 Current commit: $current_commit"
+    echo ""
+    
+    # Check if we can reach the remote
+    if ! git ls-remote --exit-code origin >/dev/null 2>&1; then
+        echo "❌ Cannot reach remote repository"
+        echo "💡 Check your internet connection and try again"
+        echo ""
+        return 1
+    fi
+    
+    # Fetch latest changes
+    echo "📡 Fetching latest changes..."
+    if git fetch origin >/dev/null 2>&1; then
+        echo "✅ Successfully fetched latest changes"
+    else
+        echo "❌ Failed to fetch changes from remote"
+        echo ""
+        return 1
+    fi
+    
+    # Check if we're behind
+    local behind_count=$(git rev-list --count HEAD..origin/$current_branch 2>/dev/null || echo "0")
+    local latest_remote_commit=$(git rev-parse --short origin/$current_branch 2>/dev/null || echo "unknown")
+    
+    if [ "$behind_count" -gt 0 ]; then
+        echo ""
+        echo "🆕 **Update Available!**"
+        echo "   Behind by $behind_count commit(s)"
+        echo "   Latest remote commit: $latest_remote_commit"
+        echo ""
+        
+        # Show recent commits
+        echo "📋 Recent changes:"
+        git log --oneline --max-count=5 HEAD..origin/$current_branch 2>/dev/null | sed 's/^/   • /' || echo "   (Unable to show recent commits)"
+        echo ""
+        
+        read -p "🔄 Would you like to update now? (y/N): " update_choice </dev/tty
+        
+        if [[ "$update_choice" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "🔄 Updating Flutter-PM..."
+            
+            if git pull origin "$current_branch" >/dev/null 2>&1; then
+                local new_commit=$(git rev-parse --short HEAD)
+                echo "✅ Successfully updated to commit: $new_commit"
+                echo ""
+                echo "🎉 Flutter-PM has been updated!"
+                echo "💡 The updated script will be used on your next run"
+            else
+                echo "❌ Failed to update"
+                echo "💡 You may need to resolve conflicts manually"
+            fi
+        else
+            echo "⏭️  Update skipped"
+        fi
+    else
+        echo ""
+        echo "✅ **You're up to date!**"
+        echo "   Current commit: $current_commit"
+        echo "   Remote commit: $latest_remote_commit"
+    fi
+    
+    echo ""
+    echo "📝 To manually update later, run: git pull origin $current_branch"
+    echo ""
+}
+
 # Check if authenticated with GitHub
 if ! gh auth status &>/dev/null; then
     echo "❌ Not authenticated with GitHub."
@@ -2264,6 +2358,11 @@ while true; do
             echo "✅ **Express update complete!**"
             echo "🎯 Your Git packages are now at the latest commits - ready for development!"
             exit 0
+            ;;
+        6)
+            # Check for Flutter-PM updates
+            check_flutter_pm_updates
+            continue  # Go back to main menu
             ;;
         *)
             break  # Exit loop for other choices
