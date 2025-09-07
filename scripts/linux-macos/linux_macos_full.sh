@@ -2211,7 +2211,127 @@ authenticate_github() {
     fi
 }
 
-# Function to check for Flutter-PM updates (simplified with native Git commands)
+# Universal Git Update Function - works for both self-updates and package updates
+universal_git_check() {
+    local repo_path="${1:-.}"           # Repository path (default: current directory)
+    local target_branch="${2:-main}"    # Target branch (default: main)  
+    local expected_commit="${3:-}"       # Optional: specific commit to compare against
+    local repo_name="${4:-repository}"  # Display name for the repository
+    
+    echo "🔍 Checking $repo_name for updates..."
+    
+    # Change to repository directory
+    local original_dir=$(pwd)
+    if ! cd "$repo_path" 2>/dev/null; then
+        echo "❌ Cannot access repository: $repo_path"
+        return 1
+    fi
+    
+    # Verify this is a git repository  
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "❌ Not a Git repository: $repo_path"
+        cd "$original_dir"
+        return 1
+    fi
+    
+    # Get current commit
+    local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    local current_short=$(echo "$current_commit" | cut -c1-7)
+    
+    # Use git remote update for reliable remote sync
+    echo "📡 Syncing with remote..."
+    git remote -v update >/dev/null 2>&1 || true
+    
+    # Determine what we're comparing against
+    local target_commit=""
+    local target_short=""
+    local comparison_type=""
+    
+    if [ -n "$expected_commit" ]; then
+        # Specific commit comparison (for package dependencies)
+        target_commit="$expected_commit"
+        target_short=$(echo "$target_commit" | cut -c1-7)
+        comparison_type="specific commit"
+    else
+        # Branch comparison (for self-updates)
+        target_commit=$(git rev-parse "origin/$target_branch" 2>/dev/null || echo "unknown")
+        target_short=$(echo "$target_commit" | cut -c1-7)
+        comparison_type="remote $target_branch branch"
+    fi
+    
+    echo "📍 Current: $current_short"
+    echo "📍 Target:  $target_short ($comparison_type)"
+    
+    # Compare commits
+    if [ "$current_commit" = "$target_commit" ] || [ "$target_commit" = "unknown" ]; then
+        echo "✅ $repo_name is up to date"
+        cd "$original_dir"
+        return 1  # Return 1 to indicate no update needed
+    else
+        echo "🔄 Update available: $current_short → $target_short"
+        
+        # Show what would change (for branch updates)
+        if [ -z "$expected_commit" ] && [ "$target_commit" != "unknown" ]; then
+            echo ""
+            echo "📋 Recent changes:"
+            git log --oneline --max-count=3 HEAD..origin/$target_branch 2>/dev/null | sed 's/^/   • /' || echo "   (Unable to show changes)"
+        fi
+        
+        cd "$original_dir"
+        return 0  # Return 0 to indicate update needed
+    fi
+}
+
+# Universal Git Update Executor - applies the actual update
+universal_git_update() {
+    local repo_path="${1:-.}"
+    local target_branch="${2:-main}"
+    local expected_commit="${3:-}"
+    local repo_name="${4:-repository}"
+    
+    echo ""
+    echo "🔄 Updating $repo_name..."
+    
+    local original_dir=$(pwd)
+    if ! cd "$repo_path" 2>/dev/null; then
+        echo "❌ Cannot access repository: $repo_path"
+        return 1
+    fi
+    
+    local success=false
+    
+    if [ -n "$expected_commit" ]; then
+        # Specific commit checkout (for packages)
+        if git checkout "$expected_commit" >/dev/null 2>&1; then
+            success=true
+        fi
+    else
+        # Branch pull (for self-updates)
+        if git pull origin "$target_branch" >/dev/null 2>&1; then
+            success=true
+        fi
+    fi
+    
+    if [ "$success" = true ]; then
+        local new_commit=$(git rev-parse --short HEAD)
+        echo "✅ Successfully updated to: $new_commit"
+        
+        # Verify with git status
+        local status_check=$(git status -uno | head -2)
+        if echo "$status_check" | grep -q "up to date\|nothing to commit"; then
+            echo "🎉 Update completed successfully!"
+        fi
+    else
+        echo "❌ Update failed"
+        cd "$original_dir"
+        return 1
+    fi
+    
+    cd "$original_dir"
+    return 0
+}
+
+# Function to check for Flutter-PM updates (using universal function)
 check_flutter_pm_updates() {
     echo ""
     echo "🔄 **Flutter Package Manager Update Check**"
@@ -2230,61 +2350,14 @@ check_flutter_pm_updates() {
     echo "📍 Current branch: $current_branch"
     echo ""
     
-    # Use EXACT same algorithm as curl installer
-    echo "🔍 Checking for updates..."
-    
-    # 1. Get current commit (same as installer)
-    local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-    
-    # 2. Fetch remote changes (same as installer)
-    git fetch origin "$current_branch" >/dev/null 2>&1 || true
-    
-    # 3. Get latest remote commit (same as installer)
-    local latest_commit=$(git rev-parse "origin/$current_branch" 2>/dev/null || echo "unknown")
-    
-    # 4. Direct comparison (same as installer)
-    if [ "$current_commit" = "$latest_commit" ]; then
-        echo "✅ Installation is already up to date"
-    else
-        local current_short=$(echo "$current_commit" | cut -c1-7)
-        local latest_short=$(echo "$latest_commit" | cut -c1-7)
-        echo "🔄 Updates available ($current_short → $latest_short)"
+    # Use universal function for update check
+    if universal_git_check "." "$current_branch" "" "Flutter-PM"; then
         echo ""
-        
-        # Show current status with git status
-        echo "📋 Current status:"
-        git status -uno | head -3
-        echo ""
-        
-        # Show recent commits that would be pulled
-        echo "📋 Recent changes:"
-        git log --oneline --max-count=5 HEAD..origin/$current_branch 2>/dev/null | sed 's/^/   • /' || echo "   (Unable to show recent commits)"
-        echo ""
-        
         read -p "🔄 Would you like to update now? (y/N): " update_choice </dev/tty
         
         if [[ "$update_choice" =~ ^[Yy]$ ]]; then
-            echo ""
-            echo "🔄 Updating Flutter-PM..."
-            
-            if git pull origin "$current_branch" 2>/dev/null; then
-                echo ""
-                echo "🎯 **Update Status Check:**"
-                # Use git status to confirm successful update
-                local status_output=$(git status -uno | head -2)
-                echo "$status_output"
-                
-                if echo "$status_output" | grep -q "up to date"; then
-                    echo ""
-                    echo "🎉 ✅ Update completed successfully!"
-                    echo "💡 The updated script will be used on your next run"
-                else
-                    echo ""
-                    echo "⚠️  Update may not be complete - check status above"
-                fi
-            else
-                echo "❌ Failed to update"
-                echo "💡 You may need to resolve conflicts manually"
+            if universal_git_update "." "$current_branch" "" "Flutter-PM"; then
+                echo "💡 The updated script will be used on your next run"
             fi
         else
             echo "⏭️  Update skipped"
@@ -2292,8 +2365,8 @@ check_flutter_pm_updates() {
     fi
     
     echo ""
-    echo "📝 To manually check status anytime: git status -uno"
-    echo "📝 To manually update later: git pull origin $current_branch"
+    echo "📝 To manually check status: git status -uno"  
+    echo "📝 To manually update: git pull origin $current_branch"
     echo ""
 }
 
