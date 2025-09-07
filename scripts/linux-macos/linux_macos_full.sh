@@ -1487,14 +1487,9 @@ check_git_dependency_cache() {
                     
                     if [ -n "$cache_dir" ]; then
                         echo -n "     🔍 Scanning local pub cache"
-                        # Look for cached version of this repo
-                        local repo_hash=$(echo "$git_url" | shasum | cut -c1-8)
-                        find "$cache_dir" -name "*$repo_hash*" -type d 2>/dev/null > /tmp/cached_paths_$$ &
-                        local find_pid=$!
-                        show_progress "" $find_pid
-                        wait $find_pid
-                        local cached_paths=$(cat /tmp/cached_paths_$$ 2>/dev/null)
-                        rm -f /tmp/cached_paths_$$
+                        # Look for cached version by package name (much simpler and reliable!)
+                        local cached_paths=$(find "$cache_dir" -name "$dep_name-*" -type d 2>/dev/null)
+                        echo "✓"
                         
                         if [ -n "$cached_paths" ]; then
                             local cached_commit=""
@@ -1517,11 +1512,15 @@ check_git_dependency_cache() {
                                 echo "     ⚠️  Could not determine cached commit"
                             fi
                         else
-                            echo "     📥 Not cached yet"
+                            echo "     📥 Will fetch: → $latest_commit"
+                            has_stale_deps=true
+                            stale_deps+=("$dep_name|$git_url|$git_ref|NEW|$latest_commit")
                         fi
                     fi
                 else
-                    echo "     📥 Not cached yet"
+                    echo "     📥 Will fetch: → $latest_commit (cache not found)"
+                    has_stale_deps=true
+                    stale_deps+=("$dep_name|$git_url|$git_ref|NEW|$latest_commit")
                 fi
             else
                 echo " ❌ Could not fetch latest commit"
@@ -1664,7 +1663,11 @@ select_packages_to_refresh() {
     
     for stale_info in "${stale_deps[@]}"; do
         IFS=\| read -r dep_name git_url git_ref cached_commit latest_commit <<< "$stale_info"
-        echo "$i. $dep_name ($cached_commit → $latest_commit)"
+        if [ "$cached_commit" = "NEW" ]; then
+            echo "$i. $dep_name (NEW → $latest_commit)"
+        else
+            echo "$i. $dep_name ($cached_commit → $latest_commit)"
+        fi
         i=$((i+1))
     done
     
