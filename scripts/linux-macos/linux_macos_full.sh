@@ -2230,14 +2230,25 @@ check_flutter_pm_updates() {
     echo "📍 Current branch: $current_branch"
     echo ""
     
-    # Use git remote update to fetch and show status (much simpler!)
+    # Use EXACT same algorithm as curl installer
     echo "🔍 Checking for updates..."
-    local update_output=$(git remote -v update 2>&1)
     
-    if echo "$update_output" | grep -q "up to date"; then
+    # 1. Get current commit (same as installer)
+    local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    
+    # 2. Fetch remote changes (same as installer)
+    git fetch origin "$current_branch" >/dev/null 2>&1 || true
+    
+    # 3. Get latest remote commit (same as installer)
+    local latest_commit=$(git rev-parse "origin/$current_branch" 2>/dev/null || echo "unknown")
+    
+    # 4. Direct comparison (same as installer)
+    if [ "$current_commit" = "$latest_commit" ]; then
         echo "✅ Installation is already up to date"
     else
-        echo "🔄 Updates are available!"
+        local current_short=$(echo "$current_commit" | cut -c1-7)
+        local latest_short=$(echo "$latest_commit" | cut -c1-7)
+        echo "🔄 Updates available ($current_short → $latest_short)"
         echo ""
         
         # Show current status with git status
