@@ -1521,13 +1521,12 @@ check_git_dependency_cache() {
                         fi
                     fi
                 else
-                    echo "     ⚠️  Could not fetch latest commit info"
+                    echo "     📥 Not cached yet"
                 fi
             else
                 echo " ❌ Could not fetch latest commit"
             fi
             echo ""
-        fi
     done < "$git_deps"
     
     rm -f "$git_deps"
