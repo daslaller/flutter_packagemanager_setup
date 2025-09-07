@@ -235,7 +235,6 @@ select_project_source() {
     echo "1. Scan directories"
     echo "2. GitHub repo" 
     echo "3. Configure search"
-    echo "6. 🔄 Check for Flutter-PM updates"
     
     local has_git_deps=false
     local default_choice="1"
@@ -255,6 +254,8 @@ select_project_source() {
             max_choice=6
         fi
     fi
+    
+    echo "6. 🔄 Check for Flutter-PM updates"
     
     read -t 15 -p "Choice (1-$max_choice, default: $default_choice, auto in 15s): " SOURCE_CHOICE </dev/tty 2>/dev/null || SOURCE_CHOICE="$default_choice"
     SOURCE_CHOICE="${SOURCE_CHOICE:-$default_choice}"
