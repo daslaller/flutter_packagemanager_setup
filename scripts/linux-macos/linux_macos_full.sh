@@ -1469,21 +1469,13 @@ check_git_dependency_cache() {
         if [ -n "$dep_name" ] && [ -n "$git_url" ]; then
             echo "   $dep_name ($git_ref) from $git_url"
             
-            # Check if this is a GitHub repo and get latest commit
-            if [[ "$git_url" == *"github.com"* ]] || [[ "$git_url" == *"//github.com"* ]]; then
-                local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
-                
-                echo -n "     🔍 Checking latest commit via GitHub API"
-                # Get latest commit hash for the branch/ref
-                curl -s "https://api.github.com/repos/$repo_path/commits/$git_ref" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/' | cut -c1-7 > /tmp/latest_commit_$$ &
-                local curl_pid=$!
-                show_progress "" $curl_pid
-                wait $curl_pid
-                local latest_commit=$(cat /tmp/latest_commit_$$ 2>/dev/null)
-                rm -f /tmp/latest_commit_$$
-                
-                if [ -n "$latest_commit" ] && [ "$latest_commit" != "null" ]; then
-                    echo "     Latest commit: $latest_commit"
+            # Check latest commit for any Git repository (works with GitHub, GitLab, etc.)
+            echo -n "     🔍 Checking latest commit via Git"
+            # Use native git command - works with any Git hosting service!
+            local latest_commit=$(git ls-remote "$git_url" "$git_ref" 2>/dev/null | cut -c1-7)
+            
+            if [ -n "$latest_commit" ]; then
+                echo " → $latest_commit"
                     
                     # Check Flutter's cache to see what commit we have
                     local cache_dir=""
@@ -1514,14 +1506,12 @@ check_git_dependency_cache() {
                             done
                             
                             if [ -n "$cached_commit" ]; then
-                                echo "     Cached commit: $cached_commit"
-                                
                                 if [ "$cached_commit" != "$latest_commit" ]; then
-                                    echo "     🔄 STALE - newer commits available!"
+                                    echo "     🔄 Update available: $cached_commit → $latest_commit"
                                     has_stale_deps=true
                                     stale_deps+=("$dep_name|$git_url|$git_ref|$cached_commit|$latest_commit")
                                 else
-                                    echo "     ✅ Up to date"
+                                    echo "     ✅ Up to date: $cached_commit"
                                 fi
                             else
                                 echo "     ⚠️  Could not determine cached commit"
@@ -1534,7 +1524,7 @@ check_git_dependency_cache() {
                     echo "     ⚠️  Could not fetch latest commit info"
                 fi
             else
-                echo "     🔗 Non-GitHub repo - cannot check for updates"
+                echo " ❌ Could not fetch latest commit"
             fi
             echo ""
         fi
