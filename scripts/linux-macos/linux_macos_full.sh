@@ -540,7 +540,7 @@ check_for_newer_commits() {
     local package_name="$3"
     
     # Only check GitHub repositories
-    if [[ "$repo_url" != *"github.com"* ]]; then
+    if [[ "$repo_url" != *"github.com"* ]] && [[ "$repo_url" != *"//github.com"* ]]; then
         echo "   ⚠️  Non-GitHub repository - cannot check for updates"
         return 1
     fi
@@ -1115,7 +1115,7 @@ auto_resolve_conflicts() {
                     echo "   📂 Git repository: $git_url"
                     
                     # Try to get latest tag/version from GitHub API
-                    if [[ "$git_url" == *"github.com"* ]]; then
+                    if [[ "$git_url" == *"github.com"* ]] || [[ "$git_url" == *"//github.com"* ]]; then
                         local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
                         local latest_tag=$(curl -s "https://api.github.com/repos/$repo_path/tags" 2>/dev/null | grep '"name"' | head -1 | sed 's/.*"name": *"\([^"]*\)".*/\1/')
                         
@@ -1465,7 +1465,7 @@ check_git_dependency_cache() {
             echo "   $dep_name ($git_ref) from $git_url"
             
             # Check if this is a GitHub repo and get latest commit
-            if [[ "$git_url" == *"github.com"* ]]; then
+            if [[ "$git_url" == *"github.com"* ]] || [[ "$git_url" == *"//github.com"* ]]; then
                 local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
                 
                 echo -n "     🔍 Checking latest commit via GitHub API"
@@ -1707,7 +1707,7 @@ show_detailed_cache_info() {
         echo "   Status: 🔄 OUTDATED"
         
         # Try to get commit messages for context
-        if [[ "$git_url" == *"github.com"* ]]; then
+        if [[ "$git_url" == *"github.com"* ]] || [[ "$git_url" == *"//github.com"* ]]; then
             local repo_path=$(echo "$git_url" | sed 's/.*github\.com[/:]\([^/]*\/[^/.]*\).*/\1/')
             
             echo "   Recent commits:"
