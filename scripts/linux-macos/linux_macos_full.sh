@@ -2219,14 +2219,12 @@ authenticate_github() {
     fi
 }
 
-# Function to check for Flutter-PM updates
+# Function to check for Flutter-PM updates (simplified with native Git commands)
 check_flutter_pm_updates() {
     echo ""
     echo "🔄 **Flutter Package Manager Update Check**"
     echo "=========================================="
     echo ""
-    
-    echo "🔍 Checking for updates to Flutter-PM..."
     
     # Check if we're in a git repository
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -2236,44 +2234,26 @@ check_flutter_pm_updates() {
         return 1
     fi
     
-    # Get current branch and commit
-    local current_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-    local current_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    
+    local current_branch=$(git branch --show-current 2>/dev/null || echo "main")
     echo "📍 Current branch: $current_branch"
-    echo "📍 Current commit: $current_commit"
     echo ""
     
-    # Check if we can reach the remote
-    if ! git ls-remote --exit-code origin >/dev/null 2>&1; then
-        echo "❌ Cannot reach remote repository"
-        echo "💡 Check your internet connection and try again"
-        echo ""
-        return 1
-    fi
+    # Use git remote update to fetch and show status (much simpler!)
+    echo "🔍 Checking for updates..."
+    local update_output=$(git remote -v update 2>&1)
     
-    # Fetch latest changes
-    echo "📡 Fetching latest changes..."
-    if git fetch origin >/dev/null 2>&1; then
-        echo "✅ Successfully fetched latest changes"
+    if echo "$update_output" | grep -q "up to date"; then
+        echo "✅ Installation is already up to date"
     else
-        echo "❌ Failed to fetch changes from remote"
-        echo ""
-        return 1
-    fi
-    
-    # Check if we're behind
-    local behind_count=$(git rev-list --count HEAD..origin/$current_branch 2>/dev/null || echo "0")
-    local latest_remote_commit=$(git rev-parse --short origin/$current_branch 2>/dev/null || echo "unknown")
-    
-    if [ "$behind_count" -gt 0 ]; then
-        echo ""
-        echo "🆕 **Update Available!**"
-        echo "   Behind by $behind_count commit(s)"
-        echo "   Latest remote commit: $latest_remote_commit"
+        echo "🔄 Updates are available!"
         echo ""
         
-        # Show recent commits
+        # Show current status with git status
+        echo "📋 Current status:"
+        git status -uno | head -3
+        echo ""
+        
+        # Show recent commits that would be pulled
         echo "📋 Recent changes:"
         git log --oneline --max-count=5 HEAD..origin/$current_branch 2>/dev/null | sed 's/^/   • /' || echo "   (Unable to show recent commits)"
         echo ""
@@ -2284,12 +2264,21 @@ check_flutter_pm_updates() {
             echo ""
             echo "🔄 Updating Flutter-PM..."
             
-            if git pull origin "$current_branch" >/dev/null 2>&1; then
-                local new_commit=$(git rev-parse --short HEAD)
-                echo "✅ Successfully updated to commit: $new_commit"
+            if git pull origin "$current_branch" 2>/dev/null; then
                 echo ""
-                echo "🎉 Flutter-PM has been updated!"
-                echo "💡 The updated script will be used on your next run"
+                echo "🎯 **Update Status Check:**"
+                # Use git status to confirm successful update
+                local status_output=$(git status -uno | head -2)
+                echo "$status_output"
+                
+                if echo "$status_output" | grep -q "up to date"; then
+                    echo ""
+                    echo "🎉 ✅ Update completed successfully!"
+                    echo "💡 The updated script will be used on your next run"
+                else
+                    echo ""
+                    echo "⚠️  Update may not be complete - check status above"
+                fi
             else
                 echo "❌ Failed to update"
                 echo "💡 You may need to resolve conflicts manually"
@@ -2297,15 +2286,11 @@ check_flutter_pm_updates() {
         else
             echo "⏭️  Update skipped"
         fi
-    else
-        echo ""
-        echo "✅ **You're up to date!**"
-        echo "   Current commit: $current_commit"
-        echo "   Remote commit: $latest_remote_commit"
     fi
     
     echo ""
-    echo "📝 To manually update later, run: git pull origin $current_branch"
+    echo "📝 To manually check status anytime: git status -uno"
+    echo "📝 To manually update later: git pull origin $current_branch"
     echo ""
 }
 
