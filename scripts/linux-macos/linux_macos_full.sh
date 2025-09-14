@@ -1347,9 +1347,9 @@ universal_git_check() {
     # Get current commit
     local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     local current_short=$(echo "$current_commit" | cut -c1-7)
-    # Use git remote update for reliable remote sync
+    # Use git fetch for reliable remote sync (same as curl installer)
     echo "📡 Syncing with remote..."
-    git remote -v update >/dev/null 2>&1 || true
+    git fetch origin "$target_branch" >/dev/null 2>&1 || true
     # Determine what we're comparing against
     local target_commit=""
     local target_short=""
@@ -1412,11 +1412,7 @@ universal_git_update() {
     if [ "$success" = true ]; then
         local new_commit=$(git rev-parse --short HEAD)
         echo "✅ Successfully updated to: $new_commit"
-        # Verify with git status
-        local status_check=$(git status -uno | head -2)
-        if echo "$status_check" | grep -q "up to date\|nothing to commit"; then
-            echo "🎉 Update completed successfully!"
-        fi
+        echo "🎉 Update completed successfully!"
     else
         echo "❌ Update failed"
         cd "$original_dir"
@@ -1430,21 +1426,24 @@ check_flutter_pm_updates() {
     echo ""; echo "🔄 **Flutter Package Manager Update Check**"
     echo "==========================================" 
     echo ""
-    # Check if we're in a git repository
-    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    # Find Flutter-PM installation directory (not current working directory!)
+    local flutter_pm_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+    
+    # Check if Flutter-PM installation is a git repository
+    if ! (cd "$flutter_pm_dir" && git rev-parse --git-dir >/dev/null 2>&1); then
         echo "❌ Flutter-PM is not installed from a Git repository"
         echo "💡 To enable updates, reinstall using the Git installation method"; echo ""
         return 1
     fi
-    local current_branch=$(git branch --show-current 2>/dev/null || echo "main")
+    local current_branch=$(cd "$flutter_pm_dir" && git branch --show-current 2>/dev/null || echo "main")
     echo "📍 Current branch: $current_branch"
     echo ""
-    # Use universal function for update check
-    if universal_git_check "." "$current_branch" "" "Flutter-PM"; then
+    # Use universal function for update check on Flutter-PM installation directory
+    if universal_git_check "$flutter_pm_dir" "$current_branch" "" "Flutter-PM"; then
         echo ""
         read -p "🔄 Would you like to update now? (y/N): " update_choice </dev/tty
         if [[ "$update_choice" =~ ^[Yy]$ ]]; then
-            if universal_git_update "." "$current_branch" "" "Flutter-PM"; then
+            if universal_git_update "$flutter_pm_dir" "$current_branch" "" "Flutter-PM"; then
                 echo "💡 The updated script will be used on your next run"
             fi
         else
@@ -1452,7 +1451,7 @@ check_flutter_pm_updates() {
         fi
     fi
     echo ""
-    echo "📝 To manually check status: git status -uno"  
+    echo "📝 To manually check status: git log --oneline -3"  
     echo "📝 To manually update: git pull origin $current_branch"
     echo ""
 }
