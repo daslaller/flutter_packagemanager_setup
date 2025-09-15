@@ -25,17 +25,17 @@ flutter-pm  # Run anytime!
 
 #### 🚀 Install & Run Immediately
 ```powershell
-iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex
 ```
 
 #### 🏃 Run Directly (No Installation)
 ```powershell
-iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/run.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/run.ps1 | iex
 ```
 
 #### 📦 Install Only (Run Later)
 ```powershell
-iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.ps1 | iex -NoRun
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex -NoRun
 flutter-pm  # Run anytime!
 ```
 
