@@ -4,7 +4,8 @@
       "Bash(copy:*)",
       "Bash(cp:*)",
       "Bash(rm:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
