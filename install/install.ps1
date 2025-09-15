@@ -14,13 +14,13 @@ $Branch = "main"
 $InstallDir = "$env:USERPROFILE\.flutter_package_manager"
 $ScriptName = "flutter-pm"
 
-Write-Host "🚀 Flutter Package Manager Installer (Windows)" -ForegroundColor Cyan
+Write-Host "[INSTALLER] Flutter Package Manager (Windows)" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Function to detect and install dependencies
 function Install-Dependencies {
-    Write-Host "📦 Checking dependencies..." -ForegroundColor Yellow
+    Write-Host "[INFO] Checking dependencies..." -ForegroundColor Yellow
     
     $missing = @()
     
@@ -35,9 +35,9 @@ function Install-Dependencies {
     }
     
     if ($missing.Count -gt 0) {
-        Write-Host "⚠️  Missing dependencies: $($missing -join ', ')" -ForegroundColor Red
+        Write-Host "[WARNING] Missing dependencies: $($missing -join ', ')" -ForegroundColor Red
         Write-Host ""
-        Write-Host "🔧 Please install the missing dependencies:" -ForegroundColor Yellow
+        Write-Host "[ACTION] Please install the missing dependencies:" -ForegroundColor Yellow
         
         if ($missing -contains "Git") {
             Write-Host "  • Git: https://git-scm.com/download/win" -ForegroundColor White
@@ -49,20 +49,20 @@ function Install-Dependencies {
         }
         
         Write-Host ""
-        Write-Host "💡 Alternative: Use chocolatey or winget:" -ForegroundColor Cyan
+        Write-Host "[TIP] Alternative: Use chocolatey or winget:" -ForegroundColor Cyan
         Write-Host "  choco install git gh" -ForegroundColor Gray
         Write-Host "  winget install Git.Git GitHub.cli" -ForegroundColor Gray
         
         exit 1
     } else {
-        Write-Host "✅ All dependencies available" -ForegroundColor Green
+        Write-Host "[SUCCESS] All dependencies available" -ForegroundColor Green
     }
 }
 
 # Function to download the package manager
 function Download-PackageManager {
     Write-Host ""
-    Write-Host "📥 Downloading Flutter Package Manager..." -ForegroundColor Yellow
+    Write-Host "[INFO] Downloading Flutter Package Manager..." -ForegroundColor Yellow
     
     # Create install directory
     if (!(Test-Path $InstallDir)) {
@@ -71,33 +71,53 @@ function Download-PackageManager {
     
     # Check if it's already a git repo
     if (Test-Path "$InstallDir\.git") {
-        Write-Host "📂 Updating existing installation..." -ForegroundColor Cyan
+        Write-Host "[UPDATE] Updating existing installation..." -ForegroundColor Cyan
         Push-Location $InstallDir
         try {
-            git pull origin $Branch *>$null
-            Write-Host "✅ Update complete" -ForegroundColor Green
+            # Reset any local changes first
+            git reset --hard HEAD *>$null
+            git clean -fd *>$null
+            # Force pull the latest changes
+            git fetch origin $Branch *>$null
+            git reset --hard "origin/$Branch" *>$null
+            Write-Host "[SUCCESS] Update complete" -ForegroundColor Green
         } catch {
-            Write-Host "⚠️  Update failed, downloading fresh copy..." -ForegroundColor Yellow
+            Write-Host "[WARNING] Update failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "[INFO] Downloading fresh copy..." -ForegroundColor Yellow
             Pop-Location
-            Remove-Item $InstallDir -Recurse -Force
+            
+            # Remove the directory more aggressively
+            if (Test-Path $InstallDir) {
+                Write-Host "[INFO] Removing old installation..." -ForegroundColor Yellow
+                try {
+                    Remove-Item $InstallDir -Recurse -Force
+                    Start-Sleep -Seconds 1
+                } catch {
+                    Write-Host "[WARNING] Could not remove old directory: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            
             git clone $RepoUrl $InstallDir
+        } finally {
+            if (Get-Location -eq $InstallDir) {
+                Pop-Location
+            }
         }
-        Pop-Location
     } else {
-        Write-Host "📥 Downloading fresh installation..." -ForegroundColor Cyan
+        Write-Host "[INFO] Downloading fresh installation..." -ForegroundColor Cyan
         if (Test-Path $InstallDir) {
-            Remove-Item $InstallDir -Recurse -Force
+            Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
         }
         git clone $RepoUrl $InstallDir
     }
     
-    Write-Host "✅ Download complete" -ForegroundColor Green
+    Write-Host "[SUCCESS] Download complete" -ForegroundColor Green
 }
 
 # Function to create global command
 function Create-GlobalCommand {
     Write-Host ""
-    Write-Host "🔗 Setting up global command..." -ForegroundColor Yellow
+    Write-Host "[SETUP] Setting up global command..." -ForegroundColor Yellow
     
     # Create batch wrapper
     $wrapperBat = "$InstallDir\$ScriptName.bat"
@@ -115,26 +135,26 @@ powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalon
     if ($userPath -notlike "*$InstallDir*") {
         try {
             [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
-            Write-Host "✅ Global command created: $ScriptName" -ForegroundColor Green
-            Write-Host "💡 Restart your terminal to use the command globally" -ForegroundColor Cyan
+            Write-Host "[SUCCESS] Global command created: $ScriptName" -ForegroundColor Green
+            Write-Host "[INFO] Restart your terminal to use the command globally" -ForegroundColor Cyan
         } catch {
-            Write-Host "⚠️  Cannot modify PATH automatically" -ForegroundColor Yellow
-            Write-Host "💡 Add manually: $InstallDir" -ForegroundColor Cyan
-            Write-Host "💡 Or run: $wrapperBat" -ForegroundColor Cyan
+            Write-Host "[WARNING] Cannot modify PATH automatically" -ForegroundColor Yellow
+            Write-Host "[INFO] Add manually: $InstallDir" -ForegroundColor Cyan
+            Write-Host "[INFO] Or run: $wrapperBat" -ForegroundColor Cyan
         }
     } else {
-        Write-Host "✅ PATH already contains install directory" -ForegroundColor Green
+        Write-Host "[SUCCESS] PATH already contains install directory" -ForegroundColor Green
     }
 }
 
 # Function to run immediately (optional)
 function Run-Immediately {
     Write-Host ""
-    Write-Host "🚀 Installation complete!" -ForegroundColor Green
+    Write-Host "[COMPLETE] Installation complete!" -ForegroundColor Green
     Write-Host ""
-    Write-Host "📋 Available options:" -ForegroundColor Cyan
-    Write-Host "1. 🎯 Run Flutter Package Manager now"
-    Write-Host "2. ✅ Exit (run later with '$ScriptName')"
+    Write-Host "[OPTIONS] Available options:" -ForegroundColor Cyan
+    Write-Host "1. [RUN] Run Flutter Package Manager now"
+    Write-Host "2. [EXIT] Exit (run later with '$ScriptName')"
     Write-Host ""
     
     $choice = Read-Host "Choose option (1-2, default: 1)"
@@ -142,17 +162,17 @@ function Run-Immediately {
     
     switch ($choice) {
         "1" {
-            Write-Host "🚀 Starting Flutter Package Manager..." -ForegroundColor Cyan
+            Write-Host "[STARTING] Flutter Package Manager..." -ForegroundColor Cyan
             Write-Host ""
             Push-Location $InstallDir
             & powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1"
             Pop-Location
         }
         "2" {
-            Write-Host "✅ Ready to use! Run '$ScriptName' anytime to start." -ForegroundColor Green
+            Write-Host "[READY] Ready to use! Run '$ScriptName' anytime to start." -ForegroundColor Green
         }
         default {
-            Write-Host "✅ Ready to use! Run '$ScriptName' anytime to start." -ForegroundColor Green
+            Write-Host "[READY] Ready to use! Run '$ScriptName' anytime to start." -ForegroundColor Green
         }
     }
 }

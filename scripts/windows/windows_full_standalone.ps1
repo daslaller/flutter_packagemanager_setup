@@ -114,7 +114,7 @@ function Set-GitHubAuthentication {
                     Write-StatusMessage "[SUCCESS] Code copied to clipboard! You can paste it in the browser." "Success"
                 } catch {
                     # If clipboard fails, still show the code
-                    Write-StatusMessage "[WARNING] Could not copy to clipboard, but here's your code: $oneTimeCode" "Warning"
+                    Write-StatusMessage "[WARNING] Could not copy to clipboard, but here is your code: $oneTimeCode" "Warning"
                 }
             } else {
                 Write-StatusMessage "[INFO] Please follow the authentication instructions in your browser" "Info"
@@ -286,7 +286,7 @@ function Show-RepositorySelector {
     $selectedIndices = @()
     $currentIndex = 0
     
-    Write-StatusMessage "[INFO] Repository Selector - Use ↑↓ arrows, SPACE to select/deselect, ENTER to confirm" "Info"
+    Write-StatusMessage "[INFO] Repository Selector - Use UP/DOWN arrows, SPACE to select/deselect, ENTER to confirm" "Info"
     Write-Host ""
     
     while ($true) {
