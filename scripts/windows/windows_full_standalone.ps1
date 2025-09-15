@@ -49,6 +49,81 @@ function Test-Command {
     }
 }
 
+function Test-FlutterProject {
+    param([string]$PubspecPath)
+    
+    if ([string]::IsNullOrEmpty($PubspecPath)) {
+        return $false
+    }
+    
+    if (-not (Test-Path $PubspecPath)) {
+        return $false
+    }
+    
+    try {
+        $pubspecContent = Get-Content $PubspecPath -Raw -ErrorAction Stop
+        # Check if it contains flutter dependency
+        return $pubspecContent -match "flutter:\s*$"
+    } catch {
+        return $false
+    }
+}
+
+function Get-SafePath {
+    param([string]$Path)
+    
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $null
+    }
+    
+    try {
+        if (Test-Path $Path) {
+            $resolvedPath = Resolve-Path $Path -ErrorAction Stop
+            return $resolvedPath.Path
+        }
+    } catch {
+        # Path resolution failed
+    }
+    
+    return $null
+}
+
+function Show-FlutterProjectHelp {
+    Write-StatusMessage "[HELP] Troubleshooting: No Flutter projects found" "Info"
+    Write-StatusMessage "" "Info"
+    Write-StatusMessage "Possible solutions:" "Info"
+    Write-StatusMessage "  1. Navigate to your Flutter project directory:" "Subtle"
+    Write-StatusMessage "     cd path\to\your\flutter\project" "Subtle"
+    Write-StatusMessage "" "Info"
+    Write-StatusMessage "  2. Create a new Flutter project:" "Subtle"
+    Write-StatusMessage "     flutter create my_app" "Subtle"
+    Write-StatusMessage "     cd my_app" "Subtle"
+    Write-StatusMessage "" "Info"
+    Write-StatusMessage "  3. Ensure your project has a valid pubspec.yaml with flutter dependency:" "Subtle"
+    Write-StatusMessage "     dependencies:" "Subtle"
+    Write-StatusMessage "       flutter:" "Subtle"
+    Write-StatusMessage "         sdk: flutter" "Subtle"
+    Write-StatusMessage "" "Info"
+    Write-StatusMessage "  4. Check if you're in the right location:" "Subtle"
+    Write-StatusMessage "     Current directory: $(Get-Location)" "Subtle"
+    
+    # Show what we can find in current directory
+    Write-StatusMessage "" "Info"
+    Write-StatusMessage "Files in current directory:" "Subtle"
+    try {
+        $files = Get-ChildItem -Path "." -File | Select-Object -First 10 -ExpandProperty Name
+        if ($files) {
+            foreach ($file in $files) {
+                Write-StatusMessage "     $file" "Subtle"
+            }
+        } else {
+            Write-StatusMessage "     (no files found)" "Subtle"
+        }
+    } catch {
+        Write-StatusMessage "     (could not list files)" "Subtle"
+    }
+}
+
 function Install-GitHubCLI {
     Write-StatusMessage "[INFO] Checking GitHub CLI installation..." "Info"
     
@@ -414,10 +489,23 @@ function Get-RepositoryConfiguration {
 function Add-PackagesToPubspec {
     param($PackageConfigs, $PubspecPath)
     
+    # Validate inputs
+    if ([string]::IsNullOrEmpty($PubspecPath)) {
+        Write-StatusMessage "[ERROR] Invalid pubspec.yaml path provided (empty or null)" "Error"
+        return $false
+    }
+    
+    if (-not $PackageConfigs -or $PackageConfigs.Count -eq 0) {
+        Write-StatusMessage "[WARNING] No package configurations provided" "Warning"
+        return $true
+    }
+    
     Write-StatusMessage "[INFO] Adding $($PackageConfigs.Count) packages to pubspec.yaml..." "Info"
+    Write-StatusMessage "[INFO] Target pubspec.yaml: $PubspecPath" "Subtle"
     
     if (-not (Test-Path $PubspecPath)) {
         Write-StatusMessage "[ERROR] pubspec.yaml not found at: $PubspecPath" "Error"
+        Write-StatusMessage "[HELP] Please ensure the path is correct and the file exists" "Info"
         return $false
     }
     
@@ -559,19 +647,106 @@ function Find-FlutterProjects {
     $flutterProjects = @()
     $searchDirs = @(".", "..")
     
+    Write-StatusMessage "[INFO] Searching for Flutter projects in current and parent directories..." "Info"
+    
     foreach ($dir in $searchDirs) {
-        if (Test-Path $dir) {
-            try {
-                $projects = Get-ChildItem -Path $dir -Recurse -Name "pubspec.yaml" -Depth 2 -ErrorAction SilentlyContinue
-                foreach ($project in $projects) {
-                    $fullPath = Join-Path $dir $project
-                    $resolvedPath = Resolve-Path $fullPath
-                    $flutterProjects += $resolvedPath.Path
+        # Validate directory path before processing
+        if ([string]::IsNullOrEmpty($dir)) {
+            Write-StatusMessage "[WARNING] Skipping empty directory path" "Warning"
+            continue
+        }
+        
+        if (-not (Test-Path $dir)) {
+            Write-StatusMessage "[WARNING] Directory does not exist: '$dir'" "Warning"
+            continue
+        }
+        
+        try {
+            $safeDirPath = Get-SafePath $dir
+            if (-not $safeDirPath) {
+                Write-StatusMessage "[WARNING] Could not resolve safe path for directory: '$dir'" "Warning"
+                continue
+            }
+            
+            Write-StatusMessage "[INFO] Searching in: $safeDirPath" "Subtle"
+            $projects = Get-ChildItem -Path $safeDirPath -Recurse -Name "pubspec.yaml" -Depth 2 -ErrorAction SilentlyContinue
+            
+            if (-not $projects) {
+                Write-StatusMessage "[INFO] No pubspec.yaml files found in: $safeDirPath" "Subtle"
+                continue
+            }
+            
+            foreach ($project in $projects) {
+                if ([string]::IsNullOrEmpty($project)) {
+                    continue
                 }
-            } catch {
-                # Ignore errors
+                
+                try {
+                    $fullPath = Join-Path $safeDirPath $project
+                    $safePath = Get-SafePath $fullPath
+                    
+                    if ($safePath -and (Test-FlutterProject $safePath)) {
+                        $flutterProjects += $safePath
+                        
+                        # Safe path operations with validation
+                        $projectDir = $null
+                        $projectName = "Unknown"
+                        
+                        try {
+                            if (-not [string]::IsNullOrEmpty($safePath)) {
+                                $projectDir = Split-Path $safePath -Parent -ErrorAction SilentlyContinue
+                                if (-not [string]::IsNullOrEmpty($projectDir)) {
+                                    $projectName = Split-Path $projectDir -Leaf -ErrorAction SilentlyContinue
+                                    if ([string]::IsNullOrEmpty($projectName)) {
+                                        $projectName = "Unknown"
+                                    }
+                                }
+                            }
+                        } catch {
+                            Write-StatusMessage "[WARNING] Could not extract project name from path: $safePath" "Warning"
+                            $projectName = "Unknown"
+                        }
+                        
+                        Write-StatusMessage "[SUCCESS] Found Flutter project: $projectName ($safePath)" "Success"
+                    }
+                } catch {
+                    Write-StatusMessage "[WARNING] Error processing pubspec.yaml: $project - $($_.Exception.Message)" "Warning"
+                }
+            }
+        } catch {
+            Write-StatusMessage "[WARNING] Error searching in directory '$dir': $($_.Exception.Message)" "Warning"
+        }
+    }
+    
+    if ($flutterProjects.Count -eq 0) {
+        Write-StatusMessage "[WARNING] No Flutter projects found in search directories" "Warning"
+        Write-StatusMessage "[INFO] Current directory: $(Get-Location)" "Info"
+        Write-StatusMessage "[INFO] Searched directories: $($searchDirs -join ', ')" "Info"
+        
+        # Provide additional debugging information
+        Write-StatusMessage "[DEBUG] Directory contents analysis:" "Subtle"
+        foreach ($dir in $searchDirs) {
+            if (Test-Path $dir) {
+                try {
+                    $safeDirPath = Get-SafePath $dir
+                    if ($safeDirPath) {
+                        $allFiles = Get-ChildItem -Path $safeDirPath -Recurse -File -Depth 2 -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*.yaml" -or $_.Name -like "*.yml" }
+                        if ($allFiles) {
+                            Write-StatusMessage "[DEBUG] Found YAML files in $dir`: $($allFiles.Count)" "Subtle"
+                            foreach ($file in $allFiles | Select-Object -First 3) {
+                                Write-StatusMessage "[DEBUG]   - $($file.FullName)" "Subtle"
+                            }
+                        } else {
+                            Write-StatusMessage "[DEBUG] No YAML files found in $dir" "Subtle"
+                        }
+                    }
+                } catch {
+                    Write-StatusMessage "[DEBUG] Could not analyze directory $dir`: $($_.Exception.Message)" "Subtle"
+                }
             }
         }
+    } else {
+        Write-StatusMessage "[SUCCESS] Found $($flutterProjects.Count) Flutter project(s)" "Success"
     }
     
     return $flutterProjects
@@ -580,25 +755,79 @@ function Find-FlutterProjects {
 function Update-FlutterPackages {
     param([string]$ProjectPath)
     
+    # Enhanced input validation
+    if ([string]::IsNullOrEmpty($ProjectPath)) {
+        Write-StatusMessage "[ERROR] Invalid project path provided (empty or null)" "Error"
+        return $false
+    }
+    
+    # Use safe path resolution
+    $safeProjectPath = Get-SafePath $ProjectPath
+    if (-not $safeProjectPath) {
+        Write-StatusMessage "[ERROR] Could not safely resolve project path: $ProjectPath" "Error"
+        return $false
+    }
+    
+    if (-not (Test-Path $safeProjectPath)) {
+        Write-StatusMessage "[ERROR] Project path does not exist: $safeProjectPath" "Error"
+        return $false
+    }
+    
     Write-StatusMessage "[INFO] Running flutter pub get..." "Info"
     
     $currentLocation = Get-Location
     try {
-        Set-Location (Split-Path $ProjectPath)
+        # Safe directory extraction with validation
+        $projectDir = $null
+        try {
+            if ([string]::IsNullOrEmpty($safeProjectPath)) {
+                Write-StatusMessage "[ERROR] Project path is empty after validation" "Error"
+                return $false
+            }
+            
+            $projectDir = Split-Path $safeProjectPath -Parent -ErrorAction Stop
+            
+            if ([string]::IsNullOrEmpty($projectDir)) {
+                Write-StatusMessage "[ERROR] Could not extract project directory from path: $safeProjectPath" "Error"
+                return $false
+            }
+            
+            if (-not (Test-Path $projectDir)) {
+                Write-StatusMessage "[ERROR] Project directory does not exist: $projectDir" "Error"
+                return $false
+            }
+        } catch {
+            Write-StatusMessage "[ERROR] Error extracting project directory: $($_.Exception.Message)" "Error"
+            return $false
+        }
+        
+        Write-StatusMessage "[INFO] Changing to project directory: $projectDir" "Subtle"
+        Set-Location $projectDir
+        
+        # Verify we're in the right location and pubspec.yaml exists
+        $pubspecInDir = Join-Path $projectDir "pubspec.yaml"
+        if (-not (Test-Path $pubspecInDir)) {
+            Write-StatusMessage "[ERROR] pubspec.yaml not found in project directory: $projectDir" "Error"
+            return $false
+        }
         
         flutter pub get
         if ($LASTEXITCODE -eq 0) {
             Write-StatusMessage "[SUCCESS] Flutter packages updated successfully" "Success"
             return $true
         } else {
-            Write-StatusMessage "[ERROR] Failed to update Flutter packages" "Error"
+            Write-StatusMessage "[ERROR] Failed to update Flutter packages (exit code: $LASTEXITCODE)" "Error"
             return $false
         }
     } catch {
-        Write-StatusMessage "[ERROR] Error running flutter pub get" "Error"
+        Write-StatusMessage "[ERROR] Error running flutter pub get: $($_.Exception.Message)" "Error"
         return $false
     } finally {
-        Set-Location $currentLocation
+        try {
+            Set-Location $currentLocation
+        } catch {
+            Write-StatusMessage "[WARNING] Could not restore original location: $($_.Exception.Message)" "Warning"
+        }
     }
 }
 
@@ -663,15 +892,97 @@ function Main {
     Write-StatusMessage "[INFO] Looking for Flutter projects..." "Info"
     $projects = Find-FlutterProjects
     
-    if ($projects.Count -eq 0) {
-        Write-StatusMessage "[ERROR] No Flutter projects found in current directory" "Error"
-        Write-StatusMessage "[HELP] Navigate to your Flutter project directory and run setup again" "Info"
+    if (-not $projects -or $projects.Count -eq 0) {
+        Write-StatusMessage "[ERROR] No Flutter projects found in current or parent directories" "Error"
+        Show-FlutterProjectHelp
         return 1
     }
     
-    $selectedProject = $projects[0]
-    $projectName = Split-Path (Split-Path $selectedProject) -Leaf
-    Write-StatusMessage "[SUCCESS] Using Flutter project: $projectName" "Success"
+    # Validate the selected project path
+    $selectedProject = $null
+    if ($projects -and $projects.Count -gt 0) {
+        $selectedProject = $projects[0]
+    }
+    
+    if ([string]::IsNullOrEmpty($selectedProject)) {
+        Write-StatusMessage "[ERROR] No valid project path available from search results" "Error"
+        Show-FlutterProjectHelp
+        return 1
+    }
+    
+    if (-not (Test-Path $selectedProject)) {
+        Write-StatusMessage "[ERROR] Selected project path does not exist: '$selectedProject'" "Error"
+        Write-StatusMessage "[HELP] Please navigate to your Flutter project directory and run setup again" "Info"
+        return 1
+    }
+    
+    # Double-check that it's still a valid Flutter project
+    if (-not (Test-FlutterProject $selectedProject)) {
+        Write-StatusMessage "[ERROR] Selected file is not a valid Flutter pubspec.yaml: '$selectedProject'" "Error"
+        Write-StatusMessage "[HELP] Please ensure the pubspec.yaml contains a flutter dependency" "Info"
+        return 1
+    }
+    
+    try {
+        # Enhanced path validation and safe operations
+        if ([string]::IsNullOrEmpty($selectedProject)) {
+            Write-StatusMessage "[ERROR] Selected project path is null or empty" "Error"
+            return 1
+        }
+        
+        # Use safe path resolution
+        $safeProjectPath = Get-SafePath $selectedProject
+        if (-not $safeProjectPath) {
+            Write-StatusMessage "[ERROR] Could not safely resolve project path: '$selectedProject'" "Error"
+            return 1
+        }
+        
+        # Safe directory extraction with comprehensive validation
+        $projectDir = $null
+        $projectName = "Unknown Project"
+        
+        try {
+            $projectDir = Split-Path $safeProjectPath -Parent -ErrorAction Stop
+            if ([string]::IsNullOrEmpty($projectDir)) {
+                Write-StatusMessage "[ERROR] Could not determine project directory from path: '$safeProjectPath'" "Error"
+                return 1
+            }
+            
+            # Validate that the project directory actually exists
+            if (-not (Test-Path $projectDir)) {
+                Write-StatusMessage "[ERROR] Project directory does not exist: '$projectDir'" "Error"
+                return 1
+            }
+            
+            # Safe project name extraction
+            try {
+                $projectName = Split-Path $projectDir -Leaf -ErrorAction Stop
+                if ([string]::IsNullOrEmpty($projectName)) {
+                    $projectName = "Unknown Project"
+                    Write-StatusMessage "[WARNING] Could not extract project name, using default" "Warning"
+                }
+            } catch {
+                Write-StatusMessage "[WARNING] Error extracting project name: $($_.Exception.Message)" "Warning"
+                $projectName = "Unknown Project"
+            }
+            
+        } catch {
+            Write-StatusMessage "[ERROR] Error extracting project directory from path '$safeProjectPath': $($_.Exception.Message)" "Error"
+            return 1
+        }
+        
+        Write-StatusMessage "[SUCCESS] Using Flutter project: $projectName" "Success"
+        Write-StatusMessage "[INFO] Project path: $projectDir" "Subtle"
+        Write-StatusMessage "[INFO] Pubspec path: $safeProjectPath" "Subtle"
+        
+        # Update the selected project to use the safe path
+        $selectedProject = $safeProjectPath
+        
+    } catch {
+        Write-StatusMessage "[ERROR] Unexpected error processing project path '$selectedProject': $($_.Exception.Message)" "Error"
+        Write-StatusMessage "[HELP] Please ensure you're in a valid Flutter project directory" "Info"
+        return 1
+    }
     
     # Interactive repository selection
     Write-Host ""
