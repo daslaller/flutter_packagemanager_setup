@@ -74,29 +74,68 @@ function Download-PackageManager {
         Write-Host "[UPDATE] Updating existing installation..." -ForegroundColor Cyan
         Push-Location $InstallDir
         try {
-            # Reset any local changes first
-            git reset --hard HEAD *>$null
-            git clean -fd *>$null
-            # Force pull the latest changes
-            git fetch origin $Branch *>$null
-            git reset --hard "origin/$Branch" *>$null
-            Write-Host "[SUCCESS] Update complete" -ForegroundColor Green
-        } catch {
-            Write-Host "[WARNING] Update failed: $($_.Exception.Message)" -ForegroundColor Yellow
-            Write-Host "[INFO] Downloading fresh copy..." -ForegroundColor Yellow
-            Pop-Location
+            # Check if we can update the repository
+            $currentBranch = git branch --show-current 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not determine current branch"
+            }
             
-            # Remove the directory more aggressively
-            if (Test-Path $InstallDir) {
-                Write-Host "[INFO] Removing old installation..." -ForegroundColor Yellow
-                try {
-                    Remove-Item $InstallDir -Recurse -Force
-                    Start-Sleep -Seconds 1
-                } catch {
-                    Write-Host "[WARNING] Could not remove old directory: $($_.Exception.Message)" -ForegroundColor Yellow
+            # Stash any local changes to preserve user modifications
+            $stashResult = git stash push -m "Auto-stash before update $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" 2>$null
+            $hasStash = $LASTEXITCODE -eq 0 -and $stashResult -notlike "*No local changes to save*"
+            
+            if ($hasStash) {
+                Write-Host "[INFO] Stashed local changes to preserve user modifications" -ForegroundColor Cyan
+            }
+            
+            # Fetch latest changes
+            git fetch origin $Branch *>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to fetch from origin"
+            }
+            
+            # Update to latest version
+            git reset --hard "origin/$Branch" *>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to reset to origin/$Branch"
+            }
+            
+            # Restore stashed changes if any
+            if ($hasStash) {
+                Write-Host "[INFO] Attempting to restore your local changes..." -ForegroundColor Cyan
+                git stash pop 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "[SUCCESS] Local changes restored successfully" -ForegroundColor Green
+                } else {
+                    Write-Host "[WARNING] Could not auto-restore local changes. Check 'git stash list' if needed." -ForegroundColor Yellow
                 }
             }
             
+            Write-Host "[SUCCESS] Update complete - existing installation preserved" -ForegroundColor Green
+        } catch {
+            Write-Host "[WARNING] Git update failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "[INFO] Falling back to fresh installation..." -ForegroundColor Yellow
+            Pop-Location
+            
+            # Backup existing installation before removing
+            $backupDir = "$InstallDir.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            if (Test-Path $InstallDir) {
+                try {
+                    Write-Host "[INFO] Creating backup of existing installation..." -ForegroundColor Cyan
+                    Move-Item $InstallDir $backupDir -ErrorAction Stop
+                    Write-Host "[SUCCESS] Backup created at: $backupDir" -ForegroundColor Green
+                } catch {
+                    Write-Host "[WARNING] Could not create backup: $($_.Exception.Message)" -ForegroundColor Yellow
+                    try {
+                        Remove-Item $InstallDir -Recurse -Force -ErrorAction Stop
+                    } catch {
+                        Write-Host "[ERROR] Could not remove old installation: $($_.Exception.Message)" -ForegroundColor Red
+                        return
+                    }
+                }
+            }
+            
+            # Fresh clone
             git clone $RepoUrl $InstallDir
         } finally {
             try {
@@ -108,7 +147,16 @@ function Download-PackageManager {
     } else {
         Write-Host "[INFO] Downloading fresh installation..." -ForegroundColor Cyan
         if (Test-Path $InstallDir) {
-            Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+            # Backup existing non-git directory
+            $backupDir = "$InstallDir.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            try {
+                Write-Host "[INFO] Backing up existing directory..." -ForegroundColor Cyan
+                Move-Item $InstallDir $backupDir -ErrorAction Stop
+                Write-Host "[SUCCESS] Backup created at: $backupDir" -ForegroundColor Green
+            } catch {
+                Write-Host "[WARNING] Could not backup existing directory, removing it..." -ForegroundColor Yellow
+                Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
         git clone $RepoUrl $InstallDir
     }

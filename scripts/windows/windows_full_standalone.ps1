@@ -831,12 +831,189 @@ function Update-FlutterPackages {
     }
 }
 
-function Main {
+# Flutter project detection
+function Find-FlutterProjectInCurrentDir {
+    $pubspecPath = Join-Path (Get-Location) "pubspec.yaml"
+    if (Test-Path $pubspecPath) {
+        if (Test-FlutterProject $pubspecPath) {
+            return $pubspecPath
+        }
+    }
+    return $null
+}
+
+# Check for Git dependencies in pubspec.yaml
+function Test-HasGitDependencies {
+    param([string]$PubspecPath)
+    
+    if (-not (Test-Path $PubspecPath)) {
+        return $false
+    }
+    
+    try {
+        $content = Get-Content $PubspecPath -Raw
+        return $content -match "git:\s*\r?\n"
+    } catch {
+        return $false
+    }
+}
+
+# Self-update functionality
+function Update-FlutterPackageManager {
+    Write-StatusMessage "[INFO] Checking for Flutter Package Manager updates..." "Info"
+    
+    $scriptPath = $PSCommandPath
+    if ([string]::IsNullOrEmpty($scriptPath)) {
+        $scriptPath = $MyInvocation.MyCommand.Path
+    }
+    $scriptDir = Split-Path $scriptPath -Parent
+    $repoRoot = Split-Path (Split-Path $scriptDir -Parent) -Parent
+    
+    if (Test-Path "$repoRoot\.git") {
+        Write-StatusMessage "[INFO] Updating Flutter Package Manager..." "Info"
+        Push-Location $repoRoot
+        try {
+            git fetch origin main *>$null
+            $currentCommit = git rev-parse HEAD
+            $latestCommit = git rev-parse origin/main
+            
+            if ($currentCommit -eq $latestCommit) {
+                Write-StatusMessage "[SUCCESS] Flutter Package Manager is already up to date" "Success"
+            } else {
+                Write-StatusMessage "[INFO] Updating to latest version..." "Info"
+                git pull origin main *>$null
+                Write-StatusMessage "[SUCCESS] Flutter Package Manager updated successfully" "Success"
+                Write-StatusMessage "[INFO] Restart recommended to use the latest version" "Info"
+            }
+        } catch {
+            Write-StatusMessage "[ERROR] Update failed: $($_.Exception.Message)" "Error"
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-StatusMessage "[WARNING] Not a git repository. Please reinstall Flutter Package Manager" "Warning"
+    }
+}
+
+# Express Git update for existing projects
+function Start-ExpressGitUpdate {
+    param([string]$PubspecPath)
+    
+    Write-StatusMessage "[INFO] Express Git Package Update Mode" "Info"
+    Write-StatusMessage "======================================" "Info"
+    
+    $projectDir = Split-Path $PubspecPath -Parent
+    $projectName = Split-Path $projectDir -Leaf
+    
+    Write-StatusMessage "[INFO] Project: $projectName" "Info"
+    Write-StatusMessage "[INFO] Running flutter pub upgrade..." "Info"
+    
+    Push-Location $projectDir
+    try {
+        flutter pub upgrade
+        if ($LASTEXITCODE -eq 0) {
+            Write-StatusMessage "[SUCCESS] Git packages updated successfully" "Success"
+        } else {
+            Write-StatusMessage "[ERROR] Update failed" "Error"
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+# Configuration menu
+function Show-ConfigurationMenu {
+    Write-StatusMessage "[INFO] Configuration Settings" "Info"
+    Write-StatusMessage "============================" "Info"
     Write-Host ""
-    Write-StatusMessage "========================================" "Emphasis"
-    Write-StatusMessage "Enhanced Flutter Development Setup" "Emphasis"
-    Write-StatusMessage "========================================" "Emphasis"
+    
+    Write-StatusMessage "Current settings:" "Info"
+    Write-StatusMessage "  Use SSH: $UseSSH" "Subtle"
+    Write-StatusMessage "  Config File: $ConfigFile" "Subtle"
+    Write-StatusMessage "  Interactive Mode: $Interactive" "Subtle"
+    
     Write-Host ""
+    Write-StatusMessage "Configuration options:" "Info"
+    Write-StatusMessage "1. Toggle SSH usage" "Subtle"
+    Write-StatusMessage "2. Change config file path" "Subtle"
+    Write-StatusMessage "3. Toggle interactive mode" "Subtle"
+    Write-StatusMessage "4. Return to main menu" "Subtle"
+    
+    $choice = Read-Host "Choose option (1-4, default: 4)"
+    
+    switch ($choice) {
+        "1" {
+            $script:UseSSH = -not $UseSSH
+            Write-StatusMessage "[INFO] SSH usage set to: $UseSSH" "Info"
+        }
+        "2" {
+            $newConfigFile = Read-Host "Enter config file path (current: $ConfigFile)"
+            if (-not [string]::IsNullOrEmpty($newConfigFile)) {
+                $script:ConfigFile = $newConfigFile
+                Write-StatusMessage "[INFO] Config file set to: $ConfigFile" "Info"
+            }
+        }
+        "3" {
+            $script:Interactive = -not $Interactive
+            Write-StatusMessage "[INFO] Interactive mode set to: $Interactive" "Info"
+        }
+        default {
+            return
+        }
+    }
+    
+    # Loop back to config menu
+    Show-ConfigurationMenu
+}
+
+# Main menu system
+function Show-MainMenu {
+    $detectedProject = Find-FlutterProjectInCurrentDir
+    $hasLocalProject = $null -ne $detectedProject
+    $hasGitDeps = $false
+    $projectName = ""
+    
+    if ($hasLocalProject) {
+        $projectDir = Split-Path $detectedProject -Parent
+        $projectName = Split-Path $projectDir -Leaf
+        $hasGitDeps = Test-HasGitDependencies $detectedProject
+    }
+    
+    Write-Host ""
+    Write-StatusMessage "📱 Flutter Package Manager - Main Menu:" "Emphasis"
+    Write-StatusMessage "1. New project setup (scan directories)" "Info"
+    Write-StatusMessage "2. Add packages from GitHub repositories" "Info"
+    Write-StatusMessage "3. Configuration settings" "Info"
+    
+    if ($hasLocalProject) {
+        Write-StatusMessage "4. Use detected project: $projectName [DEFAULT]" "Success"
+        if ($hasGitDeps) {
+            Write-StatusMessage "5. 🚀 Express Git update for $projectName" "Success"
+        }
+    }
+    
+    Write-StatusMessage "6. 🔄 Update Flutter Package Manager" "Info"
+    
+    $maxChoice = if ($hasLocalProject -and $hasGitDeps) { 6 } elseif ($hasLocalProject) { 6 } else { 6 }
+    $defaultChoice = if ($hasLocalProject) { "4" } else { "1" }
+    
+    Write-Host ""
+    $choice = Read-Host "Choose option (1-$maxChoice, default: $defaultChoice)"
+    if ([string]::IsNullOrEmpty($choice)) { $choice = $defaultChoice }
+    
+    return @{
+        Choice = $choice
+        DetectedProject = $detectedProject
+        HasLocalProject = $hasLocalProject
+        HasGitDeps = $hasGitDeps
+        ProjectName = $projectName
+    }
+}
+
+# Run setup for new project
+function Start-NewProjectSetup {
+    Write-StatusMessage "[INFO] New Project Setup" "Info"
+    Write-StatusMessage "======================" "Info"
     
     # Prerequisites check
     Write-StatusMessage "[INFO] Checking prerequisites..." "Info"
@@ -845,7 +1022,7 @@ function Main {
     if (-not (Test-Command "flutter")) {
         Write-StatusMessage "[ERROR] Flutter is not installed or not in PATH" "Error"
         Write-StatusMessage "[HELP] Please install Flutter from: https://flutter.dev/" "Info"
-        return 1
+        return $false
     }
     Write-StatusMessage "[SUCCESS] Flutter is installed" "Success"
     
@@ -853,7 +1030,7 @@ function Main {
     if (-not (Test-Command "git")) {
         Write-StatusMessage "[ERROR] Git is not installed or not in PATH" "Error"
         Write-StatusMessage "[HELP] Please install Git from: https://git-scm.com/" "Info"
-        return 1
+        return $false
     }
     Write-StatusMessage "[SUCCESS] Git is installed" "Success"
     
@@ -861,14 +1038,14 @@ function Main {
     Write-Host ""
     if (-not (Install-GitHubCLI)) {
         Write-StatusMessage "[ERROR] GitHub CLI installation failed" "Error"
-        return 1
+        return $false
     }
     
     # Authenticate with GitHub
     Write-Host ""
     if (-not (Set-GitHubAuthentication)) {
         Write-StatusMessage "[ERROR] GitHub authentication failed" "Error"
-        return 1
+        return $false
     }
     
     # Configure Git
@@ -882,7 +1059,7 @@ function Main {
         if (-not (Test-SSHKey)) {
             if (-not (New-SSHKey)) {
                 Write-StatusMessage "[WARNING] SSH setup failed, falling back to HTTPS" "Warning"
-                $UseSSH = $false
+                $script:UseSSH = $false
             }
         }
     }
@@ -895,94 +1072,38 @@ function Main {
     if (-not $projects -or $projects.Count -eq 0) {
         Write-StatusMessage "[ERROR] No Flutter projects found in current or parent directories" "Error"
         Show-FlutterProjectHelp
-        return 1
+        return $false
     }
     
-    # Validate the selected project path
-    $selectedProject = $null
-    if ($projects -and $projects.Count -gt 0) {
-        $selectedProject = $projects[0]
+    return Start-PackageSelection $projects[0]
+}
+
+# Package selection workflow
+function Start-PackageSelection {
+    param([string]$PubspecPath)
+    
+    # Validate the project path
+    if ([string]::IsNullOrEmpty($PubspecPath) -or -not (Test-Path $PubspecPath)) {
+        Write-StatusMessage "[ERROR] Invalid project path" "Error"
+        return $false
     }
     
-    if ([string]::IsNullOrEmpty($selectedProject)) {
-        Write-StatusMessage "[ERROR] No valid project path available from search results" "Error"
-        Show-FlutterProjectHelp
-        return 1
+    if (-not (Test-FlutterProject $PubspecPath)) {
+        Write-StatusMessage "[ERROR] Not a valid Flutter project" "Error"
+        return $false
     }
     
-    if (-not (Test-Path $selectedProject)) {
-        Write-StatusMessage "[ERROR] Selected project path does not exist: '$selectedProject'" "Error"
-        Write-StatusMessage "[HELP] Please navigate to your Flutter project directory and run setup again" "Info"
-        return 1
+    $safeProjectPath = Get-SafePath $PubspecPath
+    if (-not $safeProjectPath) {
+        Write-StatusMessage "[ERROR] Could not safely resolve project path" "Error"
+        return $false
     }
     
-    # Double-check that it's still a valid Flutter project
-    if (-not (Test-FlutterProject $selectedProject)) {
-        Write-StatusMessage "[ERROR] Selected file is not a valid Flutter pubspec.yaml: '$selectedProject'" "Error"
-        Write-StatusMessage "[HELP] Please ensure the pubspec.yaml contains a flutter dependency" "Info"
-        return 1
-    }
+    $projectDir = Split-Path $safeProjectPath -Parent
+    $projectName = Split-Path $projectDir -Leaf
     
-    try {
-        # Enhanced path validation and safe operations
-        if ([string]::IsNullOrEmpty($selectedProject)) {
-            Write-StatusMessage "[ERROR] Selected project path is null or empty" "Error"
-            return 1
-        }
-        
-        # Use safe path resolution
-        $safeProjectPath = Get-SafePath $selectedProject
-        if (-not $safeProjectPath) {
-            Write-StatusMessage "[ERROR] Could not safely resolve project path: '$selectedProject'" "Error"
-            return 1
-        }
-        
-        # Safe directory extraction with comprehensive validation
-        $projectDir = $null
-        $projectName = "Unknown Project"
-        
-        try {
-            $projectDir = Split-Path $safeProjectPath -Parent -ErrorAction Stop
-            if ([string]::IsNullOrEmpty($projectDir)) {
-                Write-StatusMessage "[ERROR] Could not determine project directory from path: '$safeProjectPath'" "Error"
-                return 1
-            }
-            
-            # Validate that the project directory actually exists
-            if (-not (Test-Path $projectDir)) {
-                Write-StatusMessage "[ERROR] Project directory does not exist: '$projectDir'" "Error"
-                return 1
-            }
-            
-            # Safe project name extraction
-            try {
-                $projectName = Split-Path $projectDir -Leaf -ErrorAction Stop
-                if ([string]::IsNullOrEmpty($projectName)) {
-                    $projectName = "Unknown Project"
-                    Write-StatusMessage "[WARNING] Could not extract project name, using default" "Warning"
-                }
-            } catch {
-                Write-StatusMessage "[WARNING] Error extracting project name: $($_.Exception.Message)" "Warning"
-                $projectName = "Unknown Project"
-            }
-            
-        } catch {
-            Write-StatusMessage "[ERROR] Error extracting project directory from path '$safeProjectPath': $($_.Exception.Message)" "Error"
-            return 1
-        }
-        
-        Write-StatusMessage "[SUCCESS] Using Flutter project: $projectName" "Success"
-        Write-StatusMessage "[INFO] Project path: $projectDir" "Subtle"
-        Write-StatusMessage "[INFO] Pubspec path: $safeProjectPath" "Subtle"
-        
-        # Update the selected project to use the safe path
-        $selectedProject = $safeProjectPath
-        
-    } catch {
-        Write-StatusMessage "[ERROR] Unexpected error processing project path '$selectedProject': $($_.Exception.Message)" "Error"
-        Write-StatusMessage "[HELP] Please ensure you're in a valid Flutter project directory" "Info"
-        return 1
-    }
+    Write-StatusMessage "[SUCCESS] Using Flutter project: $projectName" "Success"
+    Write-StatusMessage "[INFO] Project path: $projectDir" "Subtle"
     
     # Interactive repository selection
     Write-Host ""
@@ -990,27 +1111,96 @@ function Main {
     
     if ($packageConfigs -and $packageConfigs.Count -gt 0) {
         Write-Host ""
-        if (Add-PackagesToPubspec $packageConfigs $selectedProject) {
+        if (Add-PackagesToPubspec $packageConfigs $safeProjectPath) {
             Write-Host ""
-            Update-FlutterPackages $selectedProject
+            Update-FlutterPackages $safeProjectPath
+            
+            Write-Host ""
+            Write-StatusMessage "========================================" "Emphasis"
+            Write-StatusMessage "[SUCCESS] Setup completed!" "Success"
+            Write-StatusMessage "========================================" "Emphasis"
+            
+            Write-Host ""
+            Write-StatusMessage "Next steps:" "Info"
+            Write-StatusMessage "  - Navigate to your project: cd $projectDir" "Subtle"
+            Write-StatusMessage "  - Start coding with your new packages!" "Subtle"
+            Write-Host ""
         }
     } else {
         Write-StatusMessage "[INFO] No packages configured. You can run this script again to add packages." "Info"
     }
     
-    # Summary
+    return $true
+}
+
+function Main {
     Write-Host ""
-    Write-StatusMessage "========================================" "Emphasis"
-    Write-StatusMessage "[SUCCESS] Setup completed!" "Success"
+    Write-StatusMessage "📦 Flutter Package Manager v2.0" "Emphasis"
+    Write-StatusMessage "🤖 AI-Powered Git Dependency Management" "Emphasis"
     Write-StatusMessage "========================================" "Emphasis"
     Write-Host ""
     
-    Write-StatusMessage "What's next?" "Info"
-    Write-StatusMessage "  - Clone repositories: gh repo clone owner/repo" "Subtle"
-    Write-StatusMessage "  - Navigate to your project and start coding!" "Subtle"
-    Write-StatusMessage "  - Use 'gh repo list' to see all repositories" "Subtle"
-    Write-Host ""
+    while ($true) {
+        $menuResult = Show-MainMenu
+        
+        switch ($menuResult.Choice) {
+            "1" {
+                Write-StatusMessage "[INFO] Starting new project setup..." "Info"
+                Start-NewProjectSetup | Out-Null
+                break
+            }
+            "2" {
+                Write-StatusMessage "[INFO] Starting GitHub repository selection..." "Info"
+                if ($menuResult.HasLocalProject) {
+                    Start-PackageSelection $menuResult.DetectedProject | Out-Null
+                } else {
+                    Write-StatusMessage "[WARNING] No local Flutter project detected" "Warning"
+                    Write-StatusMessage "[INFO] Please navigate to a Flutter project directory or create one first" "Info"
+                }
+                break
+            }
+            "3" {
+                Show-ConfigurationMenu
+                continue
+            }
+            "4" {
+                if ($menuResult.HasLocalProject) {
+                    Write-StatusMessage "[INFO] Using detected project: $($menuResult.ProjectName)" "Info"
+                    Start-PackageSelection $menuResult.DetectedProject | Out-Null
+                    break
+                } else {
+                    Write-StatusMessage "[ERROR] Invalid option: 4" "Error"
+                    continue
+                }
+            }
+            "5" {
+                if ($menuResult.HasLocalProject -and $menuResult.HasGitDeps) {
+                    Start-ExpressGitUpdate $menuResult.DetectedProject
+                    break
+                } else {
+                    Write-StatusMessage "[ERROR] Invalid option: 5" "Error"
+                    continue
+                }
+            }
+            "6" {
+                Update-FlutterPackageManager
+                break
+            }
+            default {
+                Write-StatusMessage "[ERROR] Invalid choice: $($menuResult.Choice)" "Error"
+                continue
+            }
+        }
+        
+        # Ask if user wants to continue
+        Write-Host ""
+        $continue = Read-Host "Return to main menu? (Y/n)"
+        if ($continue -like "n*") {
+            break
+        }
+    }
     
+    Write-StatusMessage "[INFO] Thank you for using Flutter Package Manager!" "Info"
     return 0
 }
 
