@@ -360,31 +360,64 @@ function Show-RepositorySelector {
     
     $selectedIndices = @()
     $currentIndex = 0
+    $windowStart = 0
+    $windowSize = 15  # Show 15 items at a time
+    $searchFilter = ""
+    $searchMode = $false
     
-    Write-StatusMessage "[INFO] Repository Selector - Use UP/DOWN arrows, SPACE to select/deselect, ENTER to confirm" "Info"
+    # Filter repositories based on search
+    $filteredRepos = $Repositories
+    $indexMapping = 0..($Repositories.Count - 1)
+    
+    Write-StatusMessage "[INFO] Enhanced Repository Selector" "Info"
     Write-Host ""
     
     while ($true) {
         # Clear screen and show header
         Clear-Host
         Write-Host ""
-        Write-StatusMessage "Select repositories to add as Flutter packages:" "Emphasis"
-        Write-Host ""
-        Write-StatusMessage "Navigation: UP/DOWN arrows | Selection: SPACE | Confirm: ENTER | Quit: Q" "Subtle"
+        Write-StatusMessage "🔍 Select repositories to add as Flutter packages:" "Emphasis"
         Write-Host ""
         
-        # Show repositories with selection indicators
-        for ($i = 0; $i -lt $Repositories.Count; $i++) {
-            $repo = $Repositories[$i]
+        if ($searchMode) {
+            Write-StatusMessage "🔍 Search Mode - Type to filter, ESC to exit search" "Info"
+            Write-StatusMessage "Filter: $searchFilter" "Emphasis"
+        } else {
+            Write-StatusMessage "Navigation: ↑↓ arrows | Page: PageUp/PageDown | Search: S | Select: SPACE | Confirm: ENTER | Quit: Q" "Subtle"
+        }
+        
+        Write-Host ""
+        Write-StatusMessage "Showing $($filteredRepos.Count) repositories (Total: $($Repositories.Count))" "Subtle"
+        Write-Host ""
+        
+        # Calculate window bounds
+        $windowEnd = [Math]::Min($windowStart + $windowSize - 1, $filteredRepos.Count - 1)
+        
+        # Show repositories in current window
+        for ($i = $windowStart; $i -le $windowEnd; $i++) {
+            if ($i -ge $filteredRepos.Count) { break }
+            
+            $repo = $filteredRepos[$i]
+            $originalIndex = $indexMapping[$i]
             $repoName = "$($repo.owner.login)/$($repo.name)"
             $privacy = if ($repo.isPrivate) { "[PRIVATE]" } else { "[PUBLIC]" }
-            $description = if ($repo.description) { "- $($repo.description)" } else { "- No description" }
+            $description = if ($repo.description) { 
+                $desc = $repo.description
+                if ($desc.Length -gt 60) { 
+                    "- $($desc.Substring(0, 57))..." 
+                } else { 
+                    "- $desc" 
+                }
+            } else { 
+                "- No description" 
+            }
             
-            $isSelected = $selectedIndices -contains $i
+            $isSelected = $selectedIndices -contains $originalIndex
             $isCurrent = $i -eq $currentIndex
             
-            $marker = if ($isSelected) { "[X]" } else { "[ ]" }
-            $cursor = if ($isCurrent) { ">" } else { " " }
+            $marker = if ($isSelected) { "[✓]" } else { "[ ]" }
+            $cursor = if ($isCurrent) { "►" } else { " " }
+            $lineNumber = "{0:D2}" -f ($i + 1)
             
             $color = if ($isCurrent) { 
                 if ($isSelected) { "Selected" } else { "Emphasis" }
@@ -392,33 +425,144 @@ function Show-RepositorySelector {
                 if ($isSelected) { "Selected" } else { "Unselected" }
             }
             
-            $line = "$cursor $marker $repoName ($privacy) $description"
+            # Highlight search terms
+            $displayName = $repoName
+            if ($searchFilter -and $repoName -match [regex]::Escape($searchFilter)) {
+                $displayName = $repoName -replace [regex]::Escape($searchFilter), "[$searchFilter]"
+            }
+            
+            $line = "$cursor $marker $lineNumber. $displayName $privacy"
             Write-Host $line -ForegroundColor $Colors[$color]
+            Write-Host "     $description" -ForegroundColor $Colors["Subtle"]
+        }
+        
+        # Show pagination info
+        if ($filteredRepos.Count -gt $windowSize) {
+            Write-Host ""
+            $currentPage = [Math]::Floor($windowStart / $windowSize) + 1
+            $totalPages = [Math]::Ceiling($filteredRepos.Count / $windowSize)
+            Write-StatusMessage "Page $currentPage of $totalPages" "Subtle"
         }
         
         Write-Host ""
         if ($selectedIndices.Count -gt 0) {
-            Write-StatusMessage "Selected: $($selectedIndices.Count) repositories" "Selected"
+            Write-StatusMessage "✓ Selected: $($selectedIndices.Count) repositories" "Selected"
+            
+            # Show selected repository names
+            $selectedNames = @()
+            foreach ($idx in $selectedIndices) {
+                $selectedNames += "$($Repositories[$idx].owner.login)/$($Repositories[$idx].name)"
+            }
+            Write-StatusMessage "Selected: $($selectedNames -join ', ')" "Subtle"
         } else {
             Write-StatusMessage "No repositories selected" "Subtle"
         }
         
         # Handle input
+        if ($searchMode) {
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            
+            if ($key.VirtualKeyCode -eq 27) { # ESC
+                $searchMode = $false
+                continue
+            } elseif ($key.VirtualKeyCode -eq 8) { # Backspace
+                if ($searchFilter.Length -gt 0) {
+                    $searchFilter = $searchFilter.Substring(0, $searchFilter.Length - 1)
+                }
+            } elseif ($key.Character -match '[a-zA-Z0-9\-_/\s]') {
+                $searchFilter += $key.Character
+            }
+            
+            # Apply filter
+            if ($searchFilter) {
+                $filteredRepos = @()
+                $newIndexMapping = @()
+                for ($i = 0; $i -lt $Repositories.Count; $i++) {
+                    $repo = $Repositories[$i]
+                    $searchText = "$($repo.owner.login)/$($repo.name) $($repo.description)"
+                    if ($searchText -match [regex]::Escape($searchFilter)) {
+                        $filteredRepos += $repo
+                        $newIndexMapping += $i
+                    }
+                }
+                $indexMapping = $newIndexMapping
+            } else {
+                $filteredRepos = $Repositories
+                $indexMapping = 0..($Repositories.Count - 1)
+            }
+            
+            # Reset position
+            $currentIndex = 0
+            $windowStart = 0
+            continue
+        }
+        
         $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         
         switch ($key.VirtualKeyCode) {
             38 { # Up arrow
-                $currentIndex = if ($currentIndex -gt 0) { $currentIndex - 1 } else { $Repositories.Count - 1 }
+                $currentIndex = if ($currentIndex -gt 0) { $currentIndex - 1 } else { $filteredRepos.Count - 1 }
+                
+                # Adjust window if needed
+                if ($currentIndex -lt $windowStart) {
+                    $windowStart = [Math]::Max(0, $currentIndex - $windowSize + 1)
+                }
+                if ($currentIndex -ge $windowStart + $windowSize) {
+                    $windowStart = $currentIndex - $windowSize + 1
+                }
             }
             40 { # Down arrow
-                $currentIndex = if ($currentIndex -lt $Repositories.Count - 1) { $currentIndex + 1 } else { 0 }
+                $currentIndex = if ($currentIndex -lt $filteredRepos.Count - 1) { $currentIndex + 1 } else { 0 }
+                
+                # Adjust window if needed
+                if ($currentIndex -ge $windowStart + $windowSize) {
+                    $windowStart = $currentIndex - $windowSize + 1
+                }
+                if ($currentIndex -lt $windowStart) {
+                    $windowStart = 0
+                }
+            }
+            33 { # Page Up
+                $windowStart = [Math]::Max(0, $windowStart - $windowSize)
+                $currentIndex = [Math]::Max(0, $currentIndex - $windowSize)
+            }
+            34 { # Page Down
+                $windowStart = [Math]::Min($filteredRepos.Count - $windowSize, $windowStart + $windowSize)
+                $currentIndex = [Math]::Min($filteredRepos.Count - 1, $currentIndex + $windowSize)
+                if ($windowStart -lt 0) { $windowStart = 0 }
+            }
+            36 { # Home
+                $currentIndex = 0
+                $windowStart = 0
+            }
+            35 { # End
+                $currentIndex = $filteredRepos.Count - 1
+                $windowStart = [Math]::Max(0, $filteredRepos.Count - $windowSize)
             }
             32 { # Space
-                if ($selectedIndices -contains $currentIndex) {
-                    $selectedIndices = $selectedIndices | Where-Object { $_ -ne $currentIndex }
-                } else {
-                    $selectedIndices += $currentIndex
+                if ($currentIndex -lt $filteredRepos.Count) {
+                    $originalIndex = $indexMapping[$currentIndex]
+                    if ($selectedIndices -contains $originalIndex) {
+                        $selectedIndices = $selectedIndices | Where-Object { $_ -ne $originalIndex }
+                    } else {
+                        $selectedIndices += $originalIndex
+                    }
                 }
+            }
+            65 { # A - Select All (visible)
+                for ($i = $windowStart; $i -lt [Math]::Min($windowStart + $windowSize, $filteredRepos.Count); $i++) {
+                    $originalIndex = $indexMapping[$i]
+                    if ($selectedIndices -notcontains $originalIndex) {
+                        $selectedIndices += $originalIndex
+                    }
+                }
+            }
+            67 { # C - Clear selection
+                $selectedIndices = @()
+            }
+            83 { # S - Search
+                $searchMode = $true
+                $searchFilter = ""
             }
             13 { # Enter
                 break
@@ -990,11 +1134,12 @@ function Show-MainMenu {
         if ($hasGitDeps) {
             Write-StatusMessage "5. 🚀 Express Git update for $projectName" "Success"
         }
+        Write-StatusMessage "6. 🧹 Git cache management" "Info"
     }
     
-    Write-StatusMessage "6. 🔄 Update Flutter Package Manager" "Info"
+    Write-StatusMessage "7. 🔄 Update Flutter Package Manager" "Info"
     
-    $maxChoice = if ($hasLocalProject -and $hasGitDeps) { 6 } elseif ($hasLocalProject) { 6 } else { 6 }
+    $maxChoice = if ($hasLocalProject -and $hasGitDeps) { 7 } elseif ($hasLocalProject) { 7 } else { 7 }
     $defaultChoice = if ($hasLocalProject) { "4" } else { "1" }
     
     Write-Host ""
@@ -1105,6 +1250,22 @@ function Start-PackageSelection {
     Write-StatusMessage "[SUCCESS] Using Flutter project: $projectName" "Success"
     Write-StatusMessage "[INFO] Project path: $projectDir" "Subtle"
     
+    # Smart code analysis and recommendations
+    Write-Host ""
+    Write-StatusMessage "[INFO] Running smart code analysis..." "Info"
+    $analysisPatterns = Analyze-CodePatterns $projectDir
+    
+    if ($analysisPatterns) {
+        Write-Host ""
+        Generate-SmartRecommendations $analysisPatterns
+        Write-Host ""
+        
+        $useRecommendations = Read-Host "Would you like to prioritize these recommended packages? (Y/n)"
+        if ($useRecommendations -notlike "n*") {
+            $script:SmartRecommendations = $analysisPatterns
+        }
+    }
+    
     # Interactive repository selection
     Write-Host ""
     $packageConfigs = Start-InteractiveRepositorySelection
@@ -1183,6 +1344,17 @@ function Main {
                 }
             }
             "6" {
+                if ($menuResult.HasLocalProject) {
+                    Write-StatusMessage "[INFO] Starting Git cache management..." "Info"
+                    $projectDir = Split-Path $menuResult.DetectedProject -Parent
+                    Clear-GitCache -ProjectDir $projectDir
+                    break
+                } else {
+                    Write-StatusMessage "[ERROR] Invalid option: 6" "Error"
+                    continue
+                }
+            }
+            "7" {
                 Update-FlutterPackageManager
                 break
             }
@@ -1202,6 +1374,1053 @@ function Main {
     
     Write-StatusMessage "[INFO] Thank you for using Flutter Package Manager!" "Info"
     return 0
+}
+
+# Smart Package Recommendations System
+function Get-PackageRecommendations {
+    param([string]$Pattern)
+    
+    $recommendations = @{
+        "setState_pattern" = @(
+            @{ Name = "riverpod"; Score = 9.2; Description = "Elegant state management with excellent API design" },
+            @{ Name = "provider"; Score = 8.1; Description = "Simple but can get verbose with complex state" },
+            @{ Name = "bloc"; Score = 7.3; Description = "Powerful but often over-engineered for simple apps" }
+        )
+        "SharedPreferences_pattern" = @(
+            @{ Name = "hive"; Score = 8.8; Description = "Ingenious NoSQL database with beautiful syntax" },
+            @{ Name = "shared_preferences"; Score = 6.5; Description = "Basic but gets messy with complex data" },
+            @{ Name = "sqflite"; Score = 7.8; Description = "Powerful but overkill for simple key-value storage" }
+        )
+        "manual_http" = @(
+            @{ Name = "dio"; Score = 9.1; Description = "Elegant HTTP client with interceptors and clean API" },
+            @{ Name = "http"; Score = 7.2; Description = "Basic but requires lots of boilerplate for complex scenarios" }
+        )
+        "Navigator_push" = @(
+            @{ Name = "go_router"; Score = 8.9; Description = "Declarative routing with excellent type safety" },
+            @{ Name = "auto_route"; Score = 8.2; Description = "Code generation approach, less boilerplate" }
+        )
+        "manual_json" = @(
+            @{ Name = "json_serializable"; Score = 8.7; Description = "Code generation eliminates boilerplate and errors" },
+            @{ Name = "freezed"; Score = 9.0; Description = "Immutable classes with union types - incredibly elegant" }
+        )
+        "manual_auth" = @(
+            @{ Name = "firebase_auth"; Score = 8.9; Description = "Comprehensive auth solution with great API" },
+            @{ Name = "supabase_auth"; Score = 8.4; Description = "Clean alternative to Firebase" }
+        )
+        "Container_styling" = @(
+            @{ Name = "flutter_screenutil"; Score = 8.3; Description = "Responsive design made simple" },
+            @{ Name = "styled_widget"; Score = 8.6; Description = "Eloquent widget styling without nesting hell" }
+        )
+        "TextEditingController_forms" = @(
+            @{ Name = "reactive_forms"; Score = 8.8; Description = "Reactive programming for forms - very elegant" },
+            @{ Name = "flutter_form_builder"; Score = 7.9; Description = "Declarative but can be verbose" }
+        )
+        "Image_network" = @(
+            @{ Name = "cached_network_image"; Score = 8.5; Description = "Intelligent caching with smooth loading states" },
+            @{ Name = "fast_cached_network_image"; Score = 8.7; Description = "Even faster with better memory management" }
+        )
+        "print_debugging" = @(
+            @{ Name = "logger"; Score = 8.4; Description = "Beautiful colored logs with different levels" },
+            @{ Name = "talker"; Score = 8.6; Description = "Comprehensive logging and error tracking" }
+        )
+        "AnimationController_manual" = @(
+            @{ Name = "flutter_animate"; Score = 9.3; Description = "Declarative animations with incredible ease of use" },
+            @{ Name = "lottie"; Score = 8.1; Description = "Complex animations via After Effects files" }
+        )
+        "DateTime_formatting" = @(
+            @{ Name = "intl"; Score = 8.0; Description = "Internationalization with date formatting" },
+            @{ Name = "timeago"; Score = 7.8; Description = "Human-readable relative time" }
+        )
+        "manual_singletons" = @(
+            @{ Name = "get_it"; Score = 8.2; Description = "Service locator pattern done right" },
+            @{ Name = "injectable"; Score = 8.5; Description = "Code generation for DI - less boilerplate" }
+        )
+    }
+    
+    return $recommendations[$Pattern]
+}
+
+function Get-QualityExplanation {
+    param([double]$Score)
+    
+    $scoreInt = [Math]::Floor($Score)
+    
+    switch ($scoreInt) {
+        9 { return "🌟 Exceptional: Ingenious design, elegant API, solves complex problems simply" }
+        8 { return "⭐ Excellent: Great architecture, clean code, well-designed API" }
+        7 { return "✨ Very Good: Solid implementation, good design patterns" }
+        6 { return "👍 Decent: Gets the job done but lacks ingenuity" }
+        default { return "👌 Functional: Works but could be more elegant" }
+    }
+}
+
+function Get-QualityLevel {
+    param([double]$Score)
+    
+    $scoreInt = [Math]::Floor($Score)
+    
+    switch ($scoreInt) {
+        9 { return "🌟" }
+        8 { return "⭐" }
+        7 { return "✨" }
+        default { return "👍" }
+    }
+}
+
+function Get-PatternTitle {
+    param([string]$Pattern)
+    
+    $titles = @{
+        "setState_pattern" = "State Management Opportunity"
+        "SharedPreferences_pattern" = "Local Storage Enhancement"
+        "manual_http" = "HTTP Client Improvement"
+        "Navigator_push" = "Navigation Architecture"
+        "manual_json" = "JSON Serialization"
+        "manual_auth" = "Authentication Solution"
+        "Container_styling" = "UI Styling Architecture"
+        "TextEditingController_forms" = "Form Management"
+        "Image_network" = "Image Loading Optimization"
+        "print_debugging" = "Logging Infrastructure"
+        "AnimationController_manual" = "Animation Framework"
+        "DateTime_formatting" = "Date/Time Handling"
+        "manual_singletons" = "Dependency Injection"
+    }
+    
+    return $titles[$Pattern] ?? "Code Enhancement"
+}
+
+function Get-PatternExplanation {
+    param([string]$Pattern)
+    
+    $explanations = @{
+        "setState_pattern" = "Moving to a proper state management solution reduces complexity and improves maintainability"
+        "SharedPreferences_pattern" = "Modern storage solutions offer better performance, type safety, and developer experience"
+        "manual_http" = "Dedicated HTTP clients provide interceptors, error handling, and cleaner APIs"
+        "Navigator_push" = "Declarative navigation reduces boilerplate and provides better type safety"
+        "manual_json" = "Code generation eliminates runtime errors and reduces boilerplate significantly"
+        "manual_auth" = "Authentication providers handle security concerns and edge cases you might miss"
+        "Container_styling" = "Styling libraries reduce widget nesting and make responsive design easier"
+        "TextEditingController_forms" = "Form libraries provide validation, reactive updates, and cleaner architecture"
+        "Image_network" = "Image caching improves performance and provides loading states out of the box"
+        "print_debugging" = "Proper logging tools provide filtering, formatting, and production-safe debugging"
+        "AnimationController_manual" = "Animation frameworks eliminate boilerplate and provide declarative syntax"
+        "DateTime_formatting" = "Internationalization libraries handle locales and provide consistent formatting"
+        "manual_singletons" = "Dependency injection containers provide better testing and cleaner architecture"
+    }
+    
+    return $explanations[$Pattern] ?? "This pattern could benefit from a more elegant solution"
+}
+
+function Analyze-CodePatterns {
+    param([string]$ProjectDir)
+    
+    Write-StatusMessage "🔍 Analyzing your Flutter code for improvement opportunities..." "Info"
+    Write-Host ""
+    
+    if (-not (Test-Path $ProjectDir)) {
+        Write-StatusMessage "❌ Project directory not found: $ProjectDir" "Error"
+        return $null
+    }
+    
+    # Find all Dart files
+    try {
+        $dartFiles = Get-ChildItem -Path $ProjectDir -Recurse -Filter "*.dart" -File | Where-Object {
+            $_.FullName -notlike "*\.git*" -and $_.FullName -notlike "*\build\*"
+        }
+        
+        if (-not $dartFiles) {
+            Write-StatusMessage "⚠️ No Dart files found in project" "Warning"
+            return $null
+        }
+        
+        Write-StatusMessage "📂 Scanning $($dartFiles.Count) Dart files..." "Info"
+        Write-Host ""
+        
+        # Combine all dart files for analysis
+        $allContent = ""
+        foreach ($file in $dartFiles) {
+            try {
+                $allContent += Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+                $allContent += "`n"
+            } catch {
+                # Skip files that can't be read
+            }
+        }
+        
+        $foundPatterns = @()
+        
+        # setState Pattern Detection
+        $setStateCount = ([regex]::Matches($allContent, "setState\(")).Count
+        if ($setStateCount -gt 0) {
+            $foundPatterns += @{ Pattern = "setState_pattern"; Count = $setStateCount }
+            Write-StatusMessage "🔄 State Management: Found $setStateCount setState() calls" "Info"
+        }
+        
+        # SharedPreferences Pattern Detection
+        $prefsCount = ([regex]::Matches($allContent, "SharedPreferences")).Count
+        if ($prefsCount -gt 0) {
+            $foundPatterns += @{ Pattern = "SharedPreferences_pattern"; Count = $prefsCount }
+            Write-StatusMessage "💾 Local Storage: Found $prefsCount SharedPreferences usages" "Info"
+        }
+        
+        # Manual HTTP Detection
+        $httpGetCount = ([regex]::Matches($allContent, "http\.get|http\.post")).Count
+        $httpClientCount = ([regex]::Matches($allContent, "HttpClient")).Count
+        $dioCount = ([regex]::Matches($allContent, "dio|Dio")).Count
+        $totalHttp = $httpGetCount + $httpClientCount
+        
+        if ($totalHttp -gt 0 -and $dioCount -eq 0) {
+            $foundPatterns += @{ Pattern = "manual_http"; Count = $totalHttp }
+            Write-StatusMessage "🌐 HTTP Calls: Found $totalHttp manual HTTP implementations" "Info"
+        }
+        
+        # Navigation Pattern Detection
+        $navCount = ([regex]::Matches($allContent, "Navigator\.push")).Count
+        $routerCount = ([regex]::Matches($allContent, "go_router|GoRouter")).Count
+        
+        if ($navCount -gt 0 -and $routerCount -eq 0) {
+            $foundPatterns += @{ Pattern = "Navigator_push"; Count = $navCount }
+            Write-StatusMessage "🧭 Navigation: Found $navCount imperative navigation calls" "Info"
+        }
+        
+        # Manual JSON Pattern Detection
+        $jsonCount = ([regex]::Matches($allContent, "fromJson|toJson")).Count
+        $jsonSerializableCount = ([regex]::Matches($allContent, "json_serializable|JsonSerializable")).Count
+        
+        if ($jsonCount -gt 0 -and $jsonSerializableCount -eq 0) {
+            $foundPatterns += @{ Pattern = "manual_json"; Count = $jsonCount }
+            Write-StatusMessage "📋 JSON Handling: Found $jsonCount manual JSON implementations" "Info"
+        }
+        
+        # Authentication Pattern Detection
+        $authCount = ([regex]::Matches($allContent, "login|signIn|authenticate")).Count
+        $firebaseAuthCount = ([regex]::Matches($allContent, "firebase_auth|FirebaseAuth")).Count
+        
+        if ($authCount -gt 0 -and $firebaseAuthCount -eq 0) {
+            $foundPatterns += @{ Pattern = "manual_auth"; Count = $authCount }
+            Write-StatusMessage "🔐 Authentication: Found $authCount manual auth implementations" "Info"
+        }
+        
+        # Container Styling Detection
+        $containerCount = ([regex]::Matches($allContent, "Container\(")).Count
+        if ($containerCount -gt 10) {
+            $foundPatterns += @{ Pattern = "Container_styling"; Count = $containerCount }
+            Write-StatusMessage "🎨 UI Styling: Found $containerCount Container widgets (potential styling complexity)" "Info"
+        }
+        
+        # Form Handling Detection
+        $controllerCount = ([regex]::Matches($allContent, "TextEditingController")).Count
+        if ($controllerCount -gt 3) {
+            $foundPatterns += @{ Pattern = "TextEditingController_forms"; Count = $controllerCount }
+            Write-StatusMessage "📝 Form Handling: Found $controllerCount TextEditingController instances" "Info"
+        }
+        
+        # Image Network Detection
+        $imageCount = ([regex]::Matches($allContent, "Image\.network")).Count
+        $cachedImageCount = ([regex]::Matches($allContent, "cached_network_image")).Count
+        
+        if ($imageCount -gt 0 -and $cachedImageCount -eq 0) {
+            $foundPatterns += @{ Pattern = "Image_network"; Count = $imageCount }
+            Write-StatusMessage "🖼️ Image Loading: Found $imageCount uncached network images" "Info"
+        }
+        
+        # Print Debugging Detection
+        $printCount = ([regex]::Matches($allContent, "print\(")).Count
+        $loggerCount = ([regex]::Matches($allContent, "logger|Logger")).Count
+        
+        if ($printCount -gt 5 -and $loggerCount -eq 0) {
+            $foundPatterns += @{ Pattern = "print_debugging"; Count = $printCount }
+            Write-StatusMessage "🐛 Debugging: Found $printCount print statements (could use proper logging)" "Info"
+        }
+        
+        # Animation Detection
+        $animCount = ([regex]::Matches($allContent, "AnimationController|Animation<")).Count
+        $flutterAnimateCount = ([regex]::Matches($allContent, "flutter_animate")).Count
+        
+        if ($animCount -gt 0 -and $flutterAnimateCount -eq 0) {
+            $foundPatterns += @{ Pattern = "AnimationController_manual"; Count = $animCount }
+            Write-StatusMessage "🎭 Animations: Found $animCount manual animation implementations" "Info"
+        }
+        
+        # DateTime Formatting Detection
+        $dateFormatCount = ([regex]::Matches($allContent, "DateTime.*toString|DateFormat.*format")).Count
+        if ($dateFormatCount -gt 0) {
+            $foundPatterns += @{ Pattern = "DateTime_formatting"; Count = $dateFormatCount }
+            Write-StatusMessage "📅 Date Formatting: Found $dateFormatCount date formatting operations" "Info"
+        }
+        
+        # Manual Singleton Detection
+        $singletonCount = ([regex]::Matches($allContent, "static.*getInstance|static.*_instance")).Count
+        if ($singletonCount -gt 0) {
+            $foundPatterns += @{ Pattern = "manual_singletons"; Count = $singletonCount }
+            Write-StatusMessage "🏗️ Dependency Management: Found $singletonCount manual singleton patterns" "Info"
+        }
+        
+        if ($foundPatterns.Count -eq 0) {
+            Write-StatusMessage "✅ Code analysis complete - no obvious improvement opportunities found!" "Success"
+            Write-StatusMessage "   Your code is already well-structured! 🎉" "Success"
+            return $null
+        }
+        
+        Write-Host ""
+        Write-StatusMessage "📊 Analysis complete: Found $($foundPatterns.Count) improvement opportunities" "Info"
+        Write-Host ""
+        
+        return $foundPatterns
+        
+    } catch {
+        Write-StatusMessage "❌ Error during code analysis: $($_.Exception.Message)" "Error"
+        return $null
+    }
+}
+
+function Generate-SmartRecommendations {
+    param($Patterns)
+    
+    if (-not $Patterns -or $Patterns.Count -eq 0) {
+        return
+    }
+    
+    Write-StatusMessage "🤖 SMART RECOMMENDATIONS - Packages that could improve your code:" "Emphasis"
+    Write-StatusMessage "=================================================================" "Info"
+    Write-Host ""
+    
+    $recCount = 0
+    
+    foreach ($patternInfo in $Patterns) {
+        $recommendations = Get-PackageRecommendations $patternInfo.Pattern
+        
+        if ($recommendations) {
+            $recCount++
+            
+            Write-StatusMessage "**$recCount. $(Get-PatternTitle $patternInfo.Pattern)** ($($patternInfo.Count) occurrences found)" "Emphasis"
+            Write-Host ""
+            
+            foreach ($recommendation in $recommendations) {
+                $qualityLevel = Get-QualityLevel $recommendation.Score
+                $qualityExplanation = Get-QualityExplanation $recommendation.Score
+                
+                Write-StatusMessage "   📦 **$($recommendation.Name)** (Quality: $($recommendation.Score)/10) $qualityLevel" "Info"
+                Write-StatusMessage "      💡 $($recommendation.Description)" "Subtle"
+                Write-StatusMessage "      📈 $qualityExplanation" "Subtle"
+                Write-Host ""
+            }
+            
+            Write-StatusMessage "   🎯 **Why this matters:** $(Get-PatternExplanation $patternInfo.Pattern)" "Info"
+            Write-Host ""
+            Write-StatusMessage $("-" * 80) "Subtle"
+            Write-Host ""
+        }
+    }
+    
+    if ($recCount -eq 0) {
+        Write-StatusMessage "🎉 No specific recommendations found - your code patterns look great!" "Success"
+    } else {
+        Write-Host ""
+        Write-StatusMessage "💡 **Next Steps:**" "Info"
+        Write-StatusMessage "   1. Review the recommendations above" "Subtle"
+        Write-StatusMessage "   2. When adding packages, flutter-pm will prioritize these high-quality options" "Subtle"
+        Write-StatusMessage "   3. Each package includes architectural guidance for integration" "Subtle"
+        Write-Host ""
+        Write-StatusMessage "🏆 **Quality Focus:** These recommendations prioritize elegant, ingenious solutions" "Info"
+        Write-StatusMessage "   over popular but overcomplicated alternatives." "Subtle"
+    }
+}
+
+# Advanced Git Cache Management
+function Get-PubCacheDir {
+    $cacheDir = "$env:LOCALAPPDATA\Pub\Cache\git"
+    if (Test-Path $cacheDir) {
+        return $cacheDir
+    }
+    
+    $alternateCache = "$env:USERPROFILE\.pub-cache\git"
+    if (Test-Path $alternateCache) {
+        return $alternateCache
+    }
+    
+    return $null
+}
+
+function Clear-GitCache {
+    param(
+        [string]$ProjectDir = ".",
+        [string[]]$PackageNames = @(),
+        [switch]$Nuclear = $false
+    )
+    
+    Write-StatusMessage "[INFO] Git Cache Management" "Info"
+    Write-StatusMessage "============================" "Info"
+    
+    $cacheDir = Get-PubCacheDir
+    if (-not $cacheDir) {
+        Write-StatusMessage "[WARNING] Pub cache directory not found" "Warning"
+        return $false
+    }
+    
+    Write-StatusMessage "[INFO] Cache directory: $cacheDir" "Subtle"
+    
+    if ($Nuclear) {
+        Write-StatusMessage "[WARNING] 💥 Nuclear option: Clearing all cache and locks" "Warning"
+        
+        $lockPath = Join-Path $ProjectDir "pubspec.lock"
+        if (Test-Path $lockPath) {
+            $backupPath = "$lockPath.backup.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item $lockPath $backupPath
+            Write-StatusMessage "[INFO] 📋 Backed up pubspec.lock" "Info"
+            Remove-Item $lockPath -Force
+            Write-StatusMessage "[INFO] 🗑️ Removed pubspec.lock" "Info"
+        }
+        
+        try {
+            Remove-Item "$cacheDir\*" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-StatusMessage "[SUCCESS] 🗑️ Cleared entire Git cache" "Success"
+        } catch {
+            Write-StatusMessage "[WARNING] Could not clear entire cache: $($_.Exception.Message)" "Warning"
+        }
+    } elseif ($PackageNames.Count -gt 0) {
+        Write-StatusMessage "[INFO] Clearing cache for specific packages..." "Info"
+        
+        foreach ($packageName in $PackageNames) {
+            try {
+                $packageDirs = Get-ChildItem -Path $cacheDir -Directory | Where-Object { 
+                    $_.Name -like "$packageName-*" 
+                }
+                
+                foreach ($dir in $packageDirs) {
+                    Remove-Item $dir.FullName -Recurse -Force
+                    Write-StatusMessage "[SUCCESS] 🗑️ Cleared cache for $packageName" "Success"
+                }
+                
+                if ($packageDirs.Count -eq 0) {
+                    Write-StatusMessage "[INFO] No cached files found for $packageName" "Info"
+                }
+            } catch {
+                Write-StatusMessage "[WARNING] Could not clear cache for $packageName`: $($_.Exception.Message)" "Warning"
+            }
+        }
+    } else {
+        Write-StatusMessage "[INFO] Available cache management options:" "Info"
+        Write-StatusMessage "1. Clear specific package cache" "Subtle"
+        Write-StatusMessage "2. Nuclear option - clear all cache and locks" "Subtle"
+        Write-StatusMessage "3. Force upgrade Git packages" "Subtle"
+        Write-StatusMessage "4. Return to main menu" "Subtle"
+        
+        $choice = Read-Host "Choose option (1-4, default: 4)"
+        
+        switch ($choice) {
+            "1" {
+                $packageName = Read-Host "Enter package name to clear cache for"
+                if (-not [string]::IsNullOrEmpty($packageName)) {
+                    Clear-GitCache -ProjectDir $ProjectDir -PackageNames @($packageName)
+                }
+            }
+            "2" {
+                $confirm = Read-Host "Are you sure you want to clear ALL cache? This will force re-download of all Git packages (y/N)"
+                if ($confirm -like "y*") {
+                    Clear-GitCache -ProjectDir $ProjectDir -Nuclear
+                }
+            }
+            "3" {
+                Force-UpgradeGitPackages -ProjectDir $ProjectDir
+            }
+            default {
+                return
+            }
+        }
+    }
+    
+    # Run flutter pub get after cache operations
+    Write-StatusMessage "[INFO] Running flutter pub get..." "Info"
+    $currentLocation = Get-Location
+    try {
+        Set-Location $ProjectDir
+        flutter pub get
+        if ($LASTEXITCODE -eq 0) {
+            Write-StatusMessage "[SUCCESS] Flutter packages updated successfully" "Success"
+        } else {
+            Write-StatusMessage "[WARNING] Flutter pub get completed with warnings" "Warning"
+        }
+    } finally {
+        Set-Location $currentLocation
+    }
+    
+    return $true
+}
+
+function Force-UpgradeGitPackages {
+    param([string]$ProjectDir = ".")
+    
+    Write-StatusMessage "[INFO] 🔄 Forcing Git package updates..." "Info"
+    
+    $currentLocation = Get-Location
+    try {
+        Set-Location $ProjectDir
+        
+        # Try flutter pub upgrade first
+        flutter pub upgrade
+        
+        # Check if --force-upgrade is available
+        $upgradeHelp = flutter pub upgrade --help 2>&1 | Out-String
+        if ($upgradeHelp -match "--force-upgrade") {
+            Write-StatusMessage "[INFO] ⚡ Using --force-upgrade flag" "Info"
+            flutter pub upgrade --force-upgrade
+        }
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-StatusMessage "[SUCCESS] Git packages upgraded successfully" "Success"
+        } else {
+            Write-StatusMessage "[WARNING] Upgrade completed with warnings" "Warning"
+        }
+    } catch {
+        Write-StatusMessage "[ERROR] Error during upgrade: $($_.Exception.Message)" "Error"
+    } finally {
+        Set-Location $currentLocation
+    }
+}
+
+# Project Auto-Fix Capabilities
+function Test-FlutterProjectHealth {
+    param([string]$ProjectDir)
+    
+    $issues = @()
+    $fixes = @()
+    
+    # Check for missing main.dart
+    $mainDartPath = Join-Path $ProjectDir "lib\main.dart"
+    if (-not (Test-Path $mainDartPath)) {
+        $issues += "Missing lib/main.dart"
+        $fixes += "create_main_dart"
+    }
+    
+    # Check for Git repository
+    $gitPath = Join-Path $ProjectDir ".git"
+    if (-not (Test-Path $gitPath)) {
+        $issues += "Not a Git repository"
+        $fixes += "init_git"
+    }
+    
+    # Check pubspec.yaml syntax
+    $pubspecPath = Join-Path $ProjectDir "pubspec.yaml"
+    if (Test-Path $pubspecPath) {
+        $pubspecContent = Get-Content $pubspecPath -Raw
+        if (-not ($pubspecContent -match "name:")) {
+            $issues += "Invalid pubspec.yaml format"
+            $fixes += "fix_pubspec"
+        }
+    }
+    
+    return @{
+        Issues = $issues
+        Fixes = $fixes
+    }
+}
+
+function Apply-ProjectAutoFixes {
+    param(
+        [string]$ProjectDir,
+        [string[]]$Fixes
+    )
+    
+    Write-StatusMessage "[INFO] 🔧 Applying Automatic Fixes" "Info"
+    Write-StatusMessage "===============================" "Info"
+    
+    foreach ($fix in $Fixes) {
+        switch ($fix) {
+            "create_main_dart" {
+                Write-StatusMessage "[INFO] 📝 Creating lib/main.dart with Flutter template..." "Info"
+                
+                $libDir = Join-Path $ProjectDir "lib"
+                if (-not (Test-Path $libDir)) {
+                    New-Item -ItemType Directory -Path $libDir -Force | Out-Null
+                }
+                
+                $mainDartContent = @"
+import 'package:flutter/material.dart';
+
+void main() => runApp(MyApp());
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Flutter Demo Home Page')),
+      body: Center(child: Text('Hello Flutter!')),
+    );
+  }
+}
+"@
+                
+                $mainDartPath = Join-Path $libDir "main.dart"
+                $mainDartContent | Set-Content $mainDartPath -Encoding UTF8
+                Write-StatusMessage "[SUCCESS] ✅ Created lib/main.dart" "Success"
+            }
+            "init_git" {
+                Write-StatusMessage "[INFO] 📦 Initializing Git repository..." "Info"
+                
+                $currentLocation = Get-Location
+                try {
+                    Set-Location $ProjectDir
+                    git init | Out-Null
+                    Write-StatusMessage "[SUCCESS] ✅ Git repository initialized" "Success"
+                } catch {
+                    Write-StatusMessage "[ERROR] Failed to initialize Git: $($_.Exception.Message)" "Error"
+                } finally {
+                    Set-Location $currentLocation
+                }
+            }
+            "fix_pubspec" {
+                Write-StatusMessage "[INFO] 📋 Fixing pubspec.yaml format..." "Info"
+                Write-StatusMessage "[WARNING] ⚠️ Manual pubspec.yaml review recommended" "Warning"
+            }
+        }
+    }
+    
+    Write-Host ""
+    Write-StatusMessage "[SUCCESS] ✅ Auto-fixes complete!" "Success"
+    Write-Host ""
+}
+
+# Monorepo Support Functions
+function Detect-MonorepoStructure {
+    param([string]$ProjectPath)
+    
+    $packages = @()
+    $isMonorepo = $false
+    
+    try {
+        # Look for packages directory (common monorepo pattern)
+        $packagesDir = Join-Path $ProjectPath "packages"
+        if (Test-Path $packagesDir) {
+            $subPackages = Get-ChildItem -Path $packagesDir -Directory | Where-Object {
+                Test-Path (Join-Path $_.FullName "pubspec.yaml")
+            }
+            
+            if ($subPackages.Count -gt 0) {
+                $isMonorepo = $true
+                foreach ($pkg in $subPackages) {
+                    $packages += @{
+                        Name = $pkg.Name
+                        Path = $pkg.FullName
+                        RelativePath = "packages/$($pkg.Name)"
+                        PubspecPath = Join-Path $pkg.FullName "pubspec.yaml"
+                    }
+                }
+                Write-StatusMessage "[INFO] 📦 Detected monorepo with $($packages.Count) packages in /packages" "Info"
+            }
+        }
+        
+        # Look for apps directory (Flutter multi-app pattern)
+        $appsDir = Join-Path $ProjectPath "apps"
+        if (Test-Path $appsDir) {
+            $appPackages = Get-ChildItem -Path $appsDir -Directory | Where-Object {
+                Test-Path (Join-Path $_.FullName "pubspec.yaml")
+            }
+            
+            if ($appPackages.Count -gt 0) {
+                $isMonorepo = $true
+                foreach ($pkg in $appPackages) {
+                    $packages += @{
+                        Name = $pkg.Name
+                        Path = $pkg.FullName
+                        RelativePath = "apps/$($pkg.Name)"
+                        PubspecPath = Join-Path $pkg.FullName "pubspec.yaml"
+                        Type = "app"
+                    }
+                }
+                Write-StatusMessage "[INFO] 📱 Detected $($appPackages.Count) apps in /apps directory" "Info"
+            }
+        }
+        
+        # Look for modules directory (custom monorepo pattern)
+        $modulesDir = Join-Path $ProjectPath "modules"
+        if (Test-Path $modulesDir) {
+            $modulePackages = Get-ChildItem -Path $modulesDir -Directory | Where-Object {
+                Test-Path (Join-Path $_.FullName "pubspec.yaml")
+            }
+            
+            if ($modulePackages.Count -gt 0) {
+                $isMonorepo = $true
+                foreach ($pkg in $modulePackages) {
+                    $packages += @{
+                        Name = $pkg.Name
+                        Path = $pkg.FullName
+                        RelativePath = "modules/$($pkg.Name)"
+                        PubspecPath = Join-Path $pkg.FullName "pubspec.yaml"
+                        Type = "module"
+                    }
+                }
+                Write-StatusMessage "[INFO] 🔧 Detected $($modulePackages.Count) modules in /modules directory" "Info"
+            }
+        }
+        
+        # Recursive search for nested packages (up to 2 levels deep)
+        $nestedPackages = Get-ChildItem -Path $ProjectPath -Recurse -Depth 2 -File -Name "pubspec.yaml" | Where-Object {
+            $_ -notlike "build\*" -and $_ -notlike ".git\*" -and $_ -ne "pubspec.yaml"
+        }
+        
+        foreach ($pubspecFile in $nestedPackages) {
+            $fullPath = Join-Path $ProjectPath $pubspecFile
+            $packageDir = Split-Path $fullPath -Parent
+            $packageName = Split-Path $packageDir -Leaf
+            $relativePath = Split-Path $pubspecFile -Parent
+            
+            # Skip if already detected
+            if ($packages | Where-Object { $_.Path -eq $packageDir }) {
+                continue
+            }
+            
+            if (Test-FlutterProject $fullPath) {
+                $packages += @{
+                    Name = $packageName
+                    Path = $packageDir
+                    RelativePath = $relativePath
+                    PubspecPath = $fullPath
+                    Type = "nested"
+                }
+                $isMonorepo = $true
+            }
+        }
+        
+        return @{
+            IsMonorepo = $isMonorepo
+            Packages = $packages
+            MainProject = if (-not $isMonorepo) { $ProjectPath } else { $null }
+        }
+        
+    } catch {
+        Write-StatusMessage "[ERROR] Error detecting monorepo structure: $($_.Exception.Message)" "Error"
+        return @{
+            IsMonorepo = $false
+            Packages = @()
+            MainProject = $ProjectPath
+        }
+    }
+}
+
+function Select-MonorepoPackage {
+    param($MonorepoInfo)
+    
+    if (-not $MonorepoInfo.IsMonorepo -or $MonorepoInfo.Packages.Count -eq 0) {
+        return $null
+    }
+    
+    Write-StatusMessage "[INFO] 📦 Monorepo Structure Detected" "Info"
+    Write-StatusMessage "======================================" "Info"
+    Write-Host ""
+    
+    Write-StatusMessage "Available packages:" "Info"
+    for ($i = 0; $i -lt $MonorepoInfo.Packages.Count; $i++) {
+        $package = $MonorepoInfo.Packages[$i]
+        $type = if ($package.Type) { "[$($package.Type.ToUpper())]" } else { "[PACKAGE]" }
+        Write-StatusMessage "$($i + 1). $($package.Name) $type" "Subtle"
+        Write-StatusMessage "    Path: $($package.RelativePath)" "Subtle"
+    }
+    
+    Write-Host ""
+    Write-StatusMessage "0. Work with all packages" "Info"
+    Write-Host ""
+    
+    do {
+        $choice = Read-Host "Select package to configure (0-$($MonorepoInfo.Packages.Count), default: 0)"
+        if ([string]::IsNullOrEmpty($choice)) { $choice = "0" }
+    } while (-not ($choice -match '^\d+$' -and [int]$choice -ge 0 -and [int]$choice -le $MonorepoInfo.Packages.Count))
+    
+    $choiceInt = [int]$choice
+    
+    if ($choiceInt -eq 0) {
+        return $MonorepoInfo.Packages
+    } else {
+        return @($MonorepoInfo.Packages[$choiceInt - 1])
+    }
+}
+
+# Dependency Conflict Resolution
+function Analyze-DependencyConflicts {
+    param([string]$PubspecPath)
+    
+    if (-not (Test-Path $PubspecPath)) {
+        return @{
+            HasConflicts = $false
+            Conflicts = @()
+        }
+    }
+    
+    try {
+        $projectDir = Split-Path $PubspecPath -Parent
+        $lockPath = Join-Path $projectDir "pubspec.lock"
+        
+        if (-not (Test-Path $lockPath)) {
+            Write-StatusMessage "[INFO] No pubspec.lock found. Running flutter pub get first..." "Info"
+            
+            $currentLocation = Get-Location
+            try {
+                Set-Location $projectDir
+                flutter pub get | Out-Null
+            } finally {
+                Set-Location $currentLocation
+            }
+        }
+        
+        if (-not (Test-Path $lockPath)) {
+            return @{
+                HasConflicts = $false
+                Conflicts = @()
+                Error = "Could not generate pubspec.lock"
+            }
+        }
+        
+        # Read pubspec.yaml to get declared dependencies
+        $pubspecContent = Get-Content $PubspecPath -Raw
+        $declaredDeps = @{}
+        
+        # Extract version constraints from pubspec.yaml
+        if ($pubspecContent -match '(?s)dependencies:(.*?)(?=\n\w|\n#|\Z)') {
+            $depsSection = $Matches[1]
+            $lines = $depsSection -split "`n"
+            
+            foreach ($line in $lines) {
+                if ($line -match '^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.+)$') {
+                    $packageName = $Matches[1].Trim()
+                    $constraint = $Matches[2].Trim()
+                    
+                    # Skip Flutter SDK and Git dependencies for version conflict analysis
+                    if ($constraint -notmatch '^flutter$' -and $constraint -notmatch 'git:') {
+                        $declaredDeps[$packageName] = $constraint
+                    }
+                }
+            }
+        }
+        
+        # Read pubspec.lock to get resolved versions
+        $lockContent = Get-Content $lockPath -Raw
+        $resolvedDeps = @{}
+        
+        if ($lockContent -match '(?s)packages:(.*?)(?=\nsdks:|\Z)') {
+            $packagesSection = $Matches[1]
+            $lines = $packagesSection -split "`n"
+            
+            $currentPackage = $null
+            foreach ($line in $lines) {
+                if ($line -match '^\s*([a-zA-Z_][a-zA-Z0-9_]*):$') {
+                    $currentPackage = $Matches[1].Trim()
+                } elseif ($currentPackage -and $line -match '^\s*version:\s*"([^"]+)"') {
+                    $resolvedDeps[$currentPackage] = $Matches[1].Trim()
+                }
+            }
+        }
+        
+        # Detect potential conflicts
+        $conflicts = @()
+        
+        # Check for outdated dependencies
+        foreach ($package in $declaredDeps.Keys) {
+            if ($resolvedDeps.ContainsKey($package)) {
+                $declared = $declaredDeps[$package]
+                $resolved = $resolvedDeps[$package]
+                
+                # Simple version conflict detection
+                if ($declared -match '^\^?(\d+)\.(\d+)\.(\d+)' -and $resolved -match '^(\d+)\.(\d+)\.(\d+)') {
+                    $declaredMajor = [int]$Matches[1]
+                    $resolvedMajor = [int]$Matches[1]
+                    
+                    if ($declaredMajor -ne $resolvedMajor) {
+                        $conflicts += @{
+                            Package = $package
+                            Type = "MajorVersionMismatch"
+                            Declared = $declared
+                            Resolved = $resolved
+                            Severity = "High"
+                            Description = "Major version mismatch between declared ($declared) and resolved ($resolved)"
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Look for common conflict patterns in pub output
+        $currentLocation = Get-Location
+        try {
+            Set-Location $projectDir
+            
+            # Run pub deps to check for conflicts
+            $pubDepsOutput = flutter pub deps 2>&1 | Out-String
+            
+            if ($pubDepsOutput -match "conflict|incompatible|failed to resolve") {
+                $conflicts += @{
+                    Package = "Multiple"
+                    Type = "ResolutionConflict"
+                    Description = "Pub dependency resolution conflicts detected"
+                    Severity = "Medium"
+                    Output = $pubDepsOutput
+                }
+            }
+            
+        } catch {
+            # Ignore errors in pub deps check
+        } finally {
+            Set-Location $currentLocation
+        }
+        
+        return @{
+            HasConflicts = $conflicts.Count -gt 0
+            Conflicts = $conflicts
+            DeclaredDeps = $declaredDeps
+            ResolvedDeps = $resolvedDeps
+        }
+        
+    } catch {
+        Write-StatusMessage "[ERROR] Error analyzing dependencies: $($_.Exception.Message)" "Error"
+        return @{
+            HasConflicts = $false
+            Conflicts = @()
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+function Suggest-ConflictResolutions {
+    param($ConflictAnalysis)
+    
+    if (-not $ConflictAnalysis.HasConflicts) {
+        return
+    }
+    
+    Write-StatusMessage "[WARNING] ⚠️ Dependency Conflicts Detected" "Warning"
+    Write-StatusMessage "=========================================" "Warning"
+    Write-Host ""
+    
+    foreach ($conflict in $ConflictAnalysis.Conflicts) {
+        Write-StatusMessage "Conflict: $($conflict.Package)" "Error"
+        Write-StatusMessage "Type: $($conflict.Type)" "Subtle"
+        Write-StatusMessage "Severity: $($conflict.Severity)" "Warning"
+        Write-StatusMessage "Description: $($conflict.Description)" "Subtle"
+        
+        # Suggest resolution strategies
+        Write-StatusMessage "💡 Resolution suggestions:" "Info"
+        
+        switch ($conflict.Type) {
+            "MajorVersionMismatch" {
+                Write-StatusMessage "  1. Update pubspec.yaml constraint to allow newer version" "Subtle"
+                Write-StatusMessage "  2. Use 'flutter pub upgrade $($conflict.Package)'" "Subtle"
+                Write-StatusMessage "  3. Check package changelog for breaking changes" "Subtle"
+            }
+            "ResolutionConflict" {
+                Write-StatusMessage "  1. Run 'flutter pub deps' to see detailed dependency tree" "Subtle"
+                Write-StatusMessage "  2. Use dependency_overrides in pubspec.yaml" "Subtle"
+                Write-StatusMessage "  3. Update conflicting packages to compatible versions" "Subtle"
+                Write-StatusMessage "  4. Consider using 'flutter pub upgrade --major-versions'" "Subtle"
+            }
+            default {
+                Write-StatusMessage "  1. Run 'flutter pub upgrade' to resolve automatically" "Subtle"
+                Write-StatusMessage "  2. Check package documentation for compatibility" "Subtle"
+            }
+        }
+        
+        Write-Host ""
+    }
+    
+    Write-StatusMessage "🔧 **Automated Resolution Options:**" "Info"
+    Write-StatusMessage "1. Try automatic upgrade" "Subtle"
+    Write-StatusMessage "2. Clear cache and rebuild dependencies" "Subtle"
+    Write-StatusMessage "3. Show detailed dependency analysis" "Subtle"
+    Write-StatusMessage "4. Continue without changes" "Subtle"
+    
+    $choice = Read-Host "Choose resolution option (1-4, default: 4)"
+    
+    switch ($choice) {
+        "1" {
+            Write-StatusMessage "[INFO] Attempting automatic upgrade..." "Info"
+            $projectDir = Split-Path (Get-Location) -Parent
+            Force-UpgradeGitPackages -ProjectDir $projectDir
+        }
+        "2" {
+            Write-StatusMessage "[INFO] Clearing cache and rebuilding..." "Info"
+            $projectDir = Split-Path (Get-Location) -Parent
+            Clear-GitCache -ProjectDir $projectDir -Nuclear
+        }
+        "3" {
+            Write-StatusMessage "[INFO] Dependency analysis:" "Info"
+            $projectDir = Split-Path (Get-Location) -Parent
+            $currentLocation = Get-Location
+            try {
+                Set-Location $projectDir
+                flutter pub deps
+            } finally {
+                Set-Location $currentLocation
+            }
+        }
+        default {
+            Write-StatusMessage "[INFO] Continuing with current configuration..." "Info"
+        }
+    }
+}
+
+function Validate-FlutterEnvironment {
+    param([string]$PubspecPath)
+    
+    $projectDir = Split-Path $PubspecPath -Parent
+    
+    # Check for monorepo structure
+    $monorepoInfo = Detect-MonorepoStructure $projectDir
+    
+    if ($monorepoInfo.IsMonorepo) {
+        Write-Host ""
+        Write-StatusMessage "🔍 **Monorepo Structure Detected**" "Info"
+        Write-StatusMessage "====================================" "Info"
+        Write-StatusMessage "Found $($monorepoInfo.Packages.Count) packages in this repository" "Info"
+        
+        $selectedPackages = Select-MonorepoPackage $monorepoInfo
+        if ($selectedPackages) {
+            # Update the global variable to work with selected packages
+            $script:MonorepoPackages = $selectedPackages
+        }
+    }
+    
+    # Standard health check
+    $healthCheck = Test-FlutterProjectHealth $projectDir
+    
+    if ($healthCheck.Issues.Count -gt 0) {
+        Write-Host ""
+        Write-StatusMessage "🔍 **Project Analysis - Issues Detected**" "Info"
+        Write-StatusMessage "========================================" "Info"
+        
+        foreach ($issue in $healthCheck.Issues) {
+            Write-StatusMessage "⚠️ $issue" "Warning"
+        }
+        
+        Write-Host ""
+        Write-StatusMessage "🔧 **Auto-Fix Available**" "Info"
+        Write-StatusMessage "I can automatically fix these issues to ensure optimal Flutter development." "Info"
+        Write-Host ""
+        
+        $applyFixes = Read-Host "Apply automatic fixes? (Y/n)"
+        if ($applyFixes -notlike "n*") {
+            Apply-ProjectAutoFixes $projectDir $healthCheck.Fixes
+        }
+    }
+    
+    # Analyze dependency conflicts
+    Write-Host ""
+    Write-StatusMessage "[INFO] Analyzing dependency conflicts..." "Info"
+    $conflictAnalysis = Analyze-DependencyConflicts $PubspecPath
+    
+    if ($conflictAnalysis.HasConflicts) {
+        Suggest-ConflictResolutions $conflictAnalysis
+    } else {
+        Write-StatusMessage "[SUCCESS] ✅ No dependency conflicts detected" "Success"
+    }
 }
 
 # Run main function
