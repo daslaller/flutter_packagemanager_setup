@@ -67,6 +67,34 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 Write-Host "[SUCCESS] PowerShell version check passed (v$($PSVersionTable.PSVersion))" -ForegroundColor Green
 Write-Host ""
 
+# Optional: Offer PowerShell 7 for better compatibility
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Host "[INFO] PowerShell 7 is recommended for best compatibility and features" -ForegroundColor Yellow
+    Write-Host "[PROMPT] Install PowerShell 7 now? (y/N)" -ForegroundColor Cyan
+    $ps7Choice = Read-Host "Install PowerShell 7 now? (y/N)"
+    if ($ps7Choice -match '^[Yy]') {
+        Write-Host "[INFO] Installing PowerShell 7..." -ForegroundColor Yellow
+        try {
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+                Write-Host "[INFO] Using winget..." -ForegroundColor Gray
+                & winget install Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements
+                Write-Host "[SUCCESS] PowerShell 7 installed via winget!" -ForegroundColor Green
+            } else {
+                Write-Host "[INFO] Using Microsoft's official installer..." -ForegroundColor Gray
+                iex "& { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI -Quiet"
+                Write-Host "[SUCCESS] PowerShell 7 installed via Microsoft installer!" -ForegroundColor Green
+            }
+            Write-Host "" 
+            Write-Host "[NEXT] Please restart this script in PowerShell 7:" -ForegroundColor Cyan
+            Write-Host "  iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex" -ForegroundColor Yellow
+            exit 0
+        } catch {
+            Write-Host "[WARNING] Automatic PowerShell 7 installation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "[INFO] You can continue with the current PowerShell version." -ForegroundColor Cyan
+        }
+    }
+}
+
 # Function to detect and install dependencies
 function Install-Dependencies {
     Write-Host "[INFO] Checking dependencies..." -ForegroundColor Yellow
@@ -260,18 +288,18 @@ function Verify-InstallationUpToDate {
         if (Test-Path $gitDir) {
             Push-Location $InstallDir
             try {
-                git fetch origin $Branch --prune 2>$null
+                git fetch origin $Branch --prune 1>$null 2>$null
                 $head = git rev-parse HEAD 2>$null
                 $remote = git rev-parse "origin/$Branch" 2>$null
                 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($remote)) {
                     Write-Host "[WARNING] Could not determine remote HEAD; attempting hard reset" -ForegroundColor Yellow
-                    git reset --hard "origin/$Branch" 2>$null
+                    git reset --hard "origin/$Branch" 1>$null 2>$null
                     $head = git rev-parse HEAD 2>$null
                     $remote = git rev-parse "origin/$Branch" 2>$null
                 }
                 if ($head -ne $remote) {
                     Write-Host "[FIX] Local not on origin/$Branch. Resetting..." -ForegroundColor Yellow
-                    git reset --hard "origin/$Branch" 2>$null
+                    git reset --hard "origin/$Branch" 1>$null 2>$null
                     $head = git rev-parse HEAD 2>$null
                     $remote = git rev-parse "origin/$Branch" 2>$null
                 }
@@ -302,8 +330,8 @@ function Verify-InstallationUpToDate {
                 if (Test-Path (Join-Path $InstallDir '.git')) {
                     Push-Location $InstallDir
                     try {
-                        git fetch origin $Branch --prune 2>$null
-                        git reset --hard "origin/$Branch" 2>$null
+                        git fetch origin $Branch --prune 1>$null 2>$null
+                        git reset --hard "origin/$Branch" 1>$null 2>$null
                     } finally {
                         Pop-Location
                     }
