@@ -214,7 +214,7 @@ function New-SSHKey {
     
     if (Test-Path $keyFile) {
         Write-StatusMessage "[INFO] SSH key already exists" "Info"
-        $useExisting = Read-Host "Use existing SSH key? (Y/n)"
+        $useExisting = Read-Host 'Use existing SSH key? (Y/n)'
         if ($useExisting -notlike "n*") {
             return $true
         }
@@ -228,7 +228,7 @@ function New-SSHKey {
             $email = "$($githubUser.login)@users.noreply.github.com"
         }
     } catch {
-        $email = Read-Host "Enter your email for the SSH key"
+        $email = Read-Host 'Enter your email for the SSH key'
     }
     
     # Generate SSH key
@@ -268,7 +268,7 @@ function New-SSHKey {
         Write-StatusMessage "  3. Give it a title (e.g., 'Windows Dev Machine')" "Subtle"
         Write-StatusMessage "  4. Click 'Add SSH key'" "Subtle"
         
-        Read-Host "Press Enter after adding the key to GitHub..."
+        Read-Host 'Press Enter after adding the key to GitHub...'
         
         # Test the connection
         return Test-SSHKey
@@ -386,13 +386,13 @@ function Get-RepositoryConfiguration {
         Write-StatusMessage "Could not fetch branches" "Warning"
     }
     
-    $ref = Read-Host "Branch/tag (default: main)"
+    $ref = Read-Host 'Branch/tag (default: main)'
     if ([string]::IsNullOrEmpty($ref)) {
         $ref = "main"
     }
     
     # Path within repository
-    $path = Read-Host "Path within repository (optional, for monorepos)"
+    $path = Read-Host 'Path within repository (optional, for monorepos)'
     
     # Determine URL based on SSH preference and repository privacy
     $gitUrl = if ($UseSSH -and $Repository.isPrivate) {
