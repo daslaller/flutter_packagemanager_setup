@@ -246,6 +246,88 @@ powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalon
     }
 }
 
+# Function to verify installation is up to date and sane
+function Verify-InstallationUpToDate {
+    param(
+        [string]$InstallDir,
+        [string]$Branch
+    )
+    Write-Host "" 
+    Write-Host "[VERIFY] Verifying installation integrity..." -ForegroundColor Yellow
+    $ok = $true
+    try {
+        $gitDir = Join-Path $InstallDir ".git"
+        if (Test-Path $gitDir) {
+            Push-Location $InstallDir
+            try {
+                git fetch origin $Branch --prune 2>$null
+                $head = git rev-parse HEAD 2>$null
+                $remote = git rev-parse "origin/$Branch" 2>$null
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($remote)) {
+                    Write-Host "[WARNING] Could not determine remote HEAD; attempting hard reset" -ForegroundColor Yellow
+                    git reset --hard "origin/$Branch" 2>$null
+                    $head = git rev-parse HEAD 2>$null
+                    $remote = git rev-parse "origin/$Branch" 2>$null
+                }
+                if ($head -ne $remote) {
+                    Write-Host "[FIX] Local not on origin/$Branch. Resetting..." -ForegroundColor Yellow
+                    git reset --hard "origin/$Branch" 2>$null
+                    $head = git rev-parse HEAD 2>$null
+                    $remote = git rev-parse "origin/$Branch" 2>$null
+                }
+                Write-Host ("[INFO] Local HEAD:  " + $head) -ForegroundColor Gray
+                Write-Host ("[INFO] Remote HEAD: " + $remote) -ForegroundColor Gray
+                if ($head -ne $remote) {
+                    Write-Host "[ERROR] Could not synchronize to origin/$Branch" -ForegroundColor Red
+                    $ok = $false
+                }
+            } finally {
+                Pop-Location
+            }
+        } else {
+            Write-Host "[WARNING] Installation is not a git repo; re-downloading..." -ForegroundColor Yellow
+            # Re-download to ensure a clean, up-to-date copy
+            Download-PackageManager
+        }
+
+        # Sanity check: ensure main script exists and does not contain legacy tokens like '??'
+        $scriptPath = Join-Path $InstallDir 'scripts\windows\windows_full_standalone.ps1'
+        if (-not (Test-Path $scriptPath)) {
+            Write-Host ("[ERROR] Missing script: " + $scriptPath) -ForegroundColor Red
+            $ok = $false
+        } else {
+            $hasNullCoalescing = Select-String -Path $scriptPath -Pattern '\?\?' -Quiet
+            if ($hasNullCoalescing) {
+                Write-Host "[FIX] Detected legacy '??' operator in script. Forcing hard reset..." -ForegroundColor Yellow
+                if (Test-Path (Join-Path $InstallDir '.git')) {
+                    Push-Location $InstallDir
+                    try {
+                        git fetch origin $Branch --prune 2>$null
+                        git reset --hard "origin/$Branch" 2>$null
+                    } finally {
+                        Pop-Location
+                    }
+                } else {
+                    Download-PackageManager
+                }
+                $hasNullCoalescing = Select-String -Path $scriptPath -Pattern '\?\?' -Quiet
+                if ($hasNullCoalescing) {
+                    Write-Host "[ERROR] Script still contains '??' after update attempts" -ForegroundColor Red
+                    $ok = $false
+                } else {
+                    Write-Host "[SUCCESS] Script updated (no '??' present)" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "[SUCCESS] Script content looks up to date" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Host ("[ERROR] Verification failed: " + $_.Exception.Message) -ForegroundColor Red
+        $ok = $false
+    }
+    return $ok
+}
+
 # Function to run immediately (optional)
 function Run-Immediately {
     Write-Host ""
@@ -264,6 +346,8 @@ function Run-Immediately {
             Write-Host "[STARTING] Flutter Package Manager..." -ForegroundColor Cyan
             Write-Host ""
             Push-Location $InstallDir
+            # Verify again just before running, to avoid stale state
+            Verify-InstallationUpToDate -InstallDir $InstallDir -Branch $Branch | Out-Null
             & powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1"
             Pop-Location
         }
@@ -303,6 +387,11 @@ if ($NoRun) {
     Write-Host "[INSTALL] Installing without running..." -ForegroundColor Yellow
     Install-Dependencies
     Download-PackageManager
+    # Verify installation is up to date after download
+    $verified = Verify-InstallationUpToDate -InstallDir $InstallDir -Branch $Branch
+    if (-not $verified) {
+        Write-Host "[WARNING] Verification reported issues. Installation may be stale." -ForegroundColor Yellow
+    }
     Create-GlobalCommand
     Write-Host "[SUCCESS] Installation complete! Run '$ScriptName' to start." -ForegroundColor Green
     exit 0
@@ -311,6 +400,13 @@ if ($NoRun) {
 if ($Update) {
     Write-Host "[UPDATE] Updating Flutter Package Manager..." -ForegroundColor Yellow
     Download-PackageManager
+    # Verify installation is up to date after update
+    $verified = Verify-InstallationUpToDate -InstallDir $InstallDir -Branch $Branch
+    if ($verified) {
+        Write-Host "[SUCCESS] Verified latest version installed" -ForegroundColor Green
+    } else {
+        Write-Host "[WARNING] Verification reported issues. Try re-running update or manual cleanup." -ForegroundColor Yellow
+    }
     Write-Host "[SUCCESS] Update complete!" -ForegroundColor Green
     exit 0
 }
