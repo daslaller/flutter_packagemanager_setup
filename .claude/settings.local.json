@@ -13,7 +13,9 @@
       "Bash(git push:*)",
       "Bash(__NEW_LINE__ git rm test_simple.ps1 test_syntax.ps1 scripts/linux-macos/pubspec.yaml scripts/linux-macos/pubspec.lock)",
       "Bash(__NEW_LINE__ git commit -m \"Clean up repository structure per audit recommendations\n\nRemove obsolete and misplaced files:\n- test_simple.ps1, test_syntax.ps1 (obsolete test files)\n- scripts/linux-macos/pubspec.yaml (misplaced Flutter project file)\n- scripts/linux-macos/pubspec.lock (1300+ lines of unrelated dependencies)\n\nThese files belonged to different projects and were causing confusion.\nRepository is now cleaner and more professional.\n\nIdentified by ParityAuditor analysis.\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\")",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(bash:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

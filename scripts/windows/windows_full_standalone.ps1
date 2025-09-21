@@ -18,6 +18,57 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Check PowerShell version for compatibility
+if ($PSVersionTable.PSVersion.Major -lt 3) {
+    Write-Host "[ERROR] PowerShell 3.0 or higher is required" -ForegroundColor Red
+    Write-Host "[INFO] Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Yellow
+    Write-Host "[ACTION] Please update PowerShell or install PowerShell 7:" -ForegroundColor Yellow
+    Write-Host "  • Windows 10/11: PowerShell 5.1+ included" -ForegroundColor White
+    Write-Host "  • PowerShell 7: winget install Microsoft.PowerShell" -ForegroundColor White
+    exit 1
+}
+
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "[WARNING] PowerShell 5.0+ recommended for best compatibility" -ForegroundColor Yellow
+    Write-Host "[INFO] Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Gray
+    Write-Host "[INFO] Some features like emoji display may not work correctly" -ForegroundColor Gray
+    Write-Host ""
+}
+
+# Smart emoji system with PowerShell version detection
+$script:UseEmojis = $PSVersionTable.PSVersion.Major -ge 5
+
+# Smart emoji mappings with compatibility-first approach
+# Using characters that work reliably across PowerShell versions
+$EmojiMap = @{
+    SUCCESS = [char]0x2713    # ✓ Check mark - works reliably
+    ERROR = "X"              # Simple X for maximum compatibility
+    INFO = "i"               # Simple i for info
+    WARNING = "!"             # Exclamation mark
+    FLUTTER = "*"             # Asterisk for packages
+    PROGRESS = ">"            # Greater than for progress
+    DETAILS = "-"             # Dash for details
+    CLEANUP = "~"             # Tilde for cleanup
+    FAST = "+"               # Plus for fast operations
+    NUCLEAR = "!"             # Exclamation for nuclear
+    CHECKMARK = [char]0x2713  # ✓ Check mark
+}
+
+# Text fallbacks for older PowerShell versions
+$TextMap = @{
+    SUCCESS = "[SUCCESS]"
+    ERROR = "[ERROR]"
+    INFO = "[INFO]"
+    WARNING = "[WARNING]"
+    FLUTTER = "[FLUTTER]"
+    PROGRESS = "[UPDATING]"
+    DETAILS = "[DETAILS]"
+    CLEANUP = "[CLEANUP]"
+    FAST = "[FAST]"
+    NUCLEAR = "[NUCLEAR]"
+    CHECKMARK = "[OK]"
+}
+
 # Colors for output
 $Colors = @{
     Error = "Red"
@@ -30,12 +81,47 @@ $Colors = @{
     Unselected = "Gray"
 }
 
+function Get-StatusIcon {
+    param([string]$IconType)
+    if ($script:UseEmojis -and $EmojiMap.ContainsKey($IconType)) {
+        return $EmojiMap[$IconType]
+    }
+    return $TextMap[$IconType]
+}
+
 function Write-StatusMessage {
     param(
         [string]$Message,
-        [string]$Type = "Info"
+        [string]$Type = "Info",
+        [string]$Icon = ""
     )
+    
     $color = $Colors[$Type]
+    
+    # Auto-detect and replace status patterns with icons for backwards compatibility
+    if ([string]::IsNullOrEmpty($Icon)) {
+        if ($Message -match "\[SUCCESS\]") {
+            $Message = $Message -replace "\[SUCCESS\]", (Get-StatusIcon "SUCCESS")
+        }
+        elseif ($Message -match "\[ERROR\]") {
+            $Message = $Message -replace "\[ERROR\]", (Get-StatusIcon "ERROR")
+        }
+        elseif ($Message -match "\[WARNING\]") {
+            $Message = $Message -replace "\[WARNING\]", (Get-StatusIcon "WARNING")
+        }
+        elseif ($Message -match "\[INFO\]") {
+            $Message = $Message -replace "\[INFO\]", (Get-StatusIcon "INFO")
+        }
+        elseif ($Message -match "\[FLUTTER\]") {
+            $Message = $Message -replace "\[FLUTTER\]", (Get-StatusIcon "FLUTTER")
+        }
+    }
+    else {
+        # Use explicit icon if provided
+        $iconSymbol = Get-StatusIcon $Icon
+        $Message = "$iconSymbol $Message"
+    }
+    
     Write-Host $Message -ForegroundColor $color
 }
 
@@ -1486,7 +1572,7 @@ function Get-PatternTitle {
         "manual_singletons" = "Dependency Injection"
     }
     
-    return $titles[$Pattern] ?? "Code Enhancement"
+    if ($titles.ContainsKey($Pattern)) { return $titles[$Pattern] } else { return "Code Enhancement" }
 }
 
 function Get-PatternExplanation {
@@ -1508,7 +1594,7 @@ function Get-PatternExplanation {
         "manual_singletons" = "Dependency injection containers provide better testing and cleaner architecture"
     }
     
-    return $explanations[$Pattern] ?? "This pattern could benefit from a more elegant solution"
+    if ($explanations.ContainsKey($Pattern)) { return $explanations[$Pattern] } else { return "This pattern could benefit from a more elegant solution" }
 }
 
 function Analyze-CodePatterns {

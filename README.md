@@ -12,12 +12,12 @@ A cross-platform tool that transforms GitHub into your private package manager f
 
 #### 🏃 Run Directly (No Installation) 
 ```bash
-curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/run.sh | bash
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/run.sh | bash
 ```
 
 #### 📦 Install Only (Run Later)
 ```bash
-curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install.sh | bash -s -- --no-run
+curl -sSL https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.sh | bash -s -- --no-run
 flutter-pm  # Run anytime!
 ```
 
@@ -55,24 +55,27 @@ flutter-pm  # Run anytime!
 
 ```
 flutter_packagemanager_setup/
+├── install/
+│   ├── install.sh                   # Linux/macOS installer with global command
+│   ├── install.ps1                  # Windows installer with global command
+│   ├── run.sh                       # Linux/macOS direct run (no install)
+│   └── run.ps1                      # Windows direct run (no install)
 ├── scripts/
 │   ├── linux-macos/
 │   │   └── linux_macos_full.sh      # Main script for Unix systems
 │   ├── windows/
-│   │   ├── windows_full_standalone.ps1
-│   │   ├── auto_and_download_windows.bat
-│   │   └── auto_and_use_local_sh.bat
+│   │   ├── windows_full_standalone.ps1 # Main Windows PowerShell script
+│   │   ├── private-packages.json    # Sample configuration file
+│   │   └── README.md                # Windows-specific documentation
 │   └── shared/
 │       ├── multiselect.sh           # Reusable multiselect component
-│       └── smart_recommendations.sh  # AI-powered package recommendations
-├── tests/
-│   └── test_multiselect.sh          # Test for multiselect functionality
-├── test_smart_recommendations.sh    # Test for smart recommendations system
-├── examples/
-│   └── test_flutter_project/        # Example Flutter project
+│       ├── smart_recommendations.sh # AI-powered package recommendations
+│       └── cross_platform_utils.sh  # Cross-platform utilities
 ├── docs/
-├── future-plans.md                  # Comprehensive AI roadmap
-└── README.md
+│   ├── CLAUDE.md                    # Claude AI context and memory
+│   ├── COMPATIBILITY.md             # Platform compatibility matrix
+│   └── future-plans.md              # Comprehensive AI roadmap
+└── README.md                        # This file
 ```
 
 ## 🛠️ Prerequisites
@@ -182,14 +185,6 @@ For each repository, you can specify:
 - Original pubspec.yaml files are automatically backed up as `.backup`
 - If a package already exists, you'll be prompted to replace it
 - Failed operations don't affect your original files
-
-## 🧪 Testing
-
-Test the multiselect functionality:
-```bash
-chmod +x tests/test_multiselect.sh
-./tests/test_multiselect.sh
-```
 
 ## 🐛 Troubleshooting
 
