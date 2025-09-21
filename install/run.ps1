@@ -15,6 +15,26 @@ Write-Host "📦 Flutter Package Manager - Direct Run (Windows)" -ForegroundColo
 Write-Host "===============================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check PowerShell version first
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "⚠️  PowerShell 5.0+ recommended for best experience" -ForegroundColor Yellow
+    Write-Host "Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Yellow
+    Write-Host "Some features like emojis may not display correctly" -ForegroundColor Gray
+    Write-Host ""
+    
+    if ($PSVersionTable.PSVersion.Major -lt 3) {
+        Write-Host "❌ PowerShell 3.0 is the minimum required version" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "💡 For the best experience, consider installing PowerShell 7:" -ForegroundColor Cyan
+    Write-Host "   winget install Microsoft.PowerShell" -ForegroundColor White
+    Write-Host ""
+}
+
+Write-Host "✅ PowerShell version: $($PSVersionTable.PSVersion)" -ForegroundColor Green
+Write-Host ""
+
 # Function to cleanup on exit
 function Cleanup {
     if (Test-Path $TempDir) {

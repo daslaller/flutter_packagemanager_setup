@@ -18,6 +18,55 @@ Write-Host "[INSTALL] Flutter Package Manager (Windows)" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check PowerShell version first  
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "[WARNING] PowerShell 5.0+ recommended for best compatibility" -ForegroundColor Yellow
+    Write-Host "[INFO] Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Yellow
+    Write-Host "[INFO] Some features like emoji display may not work correctly" -ForegroundColor Yellow
+    Write-Host ""
+    
+    if ($PSVersionTable.PSVersion.Major -lt 3) {
+        Write-Host "[ERROR] PowerShell 3.0 is the absolute minimum required" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "[OFFER] Would you like to automatically install PowerShell 7? (Recommended)" -ForegroundColor Cyan
+    Write-Host "  This will fix emoji display issues and improve performance" -ForegroundColor Gray
+    $installChoice = Read-Host "Install PowerShell 7 now? (y/N)"
+    
+    if ($installChoice -match '^[Yy]') {
+        Write-Host "[INFO] Installing PowerShell 7 using Microsoft's official installer..." -ForegroundColor Yellow
+        try {
+            # Try winget first (fastest)
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+                Write-Host "[INFO] Using winget..." -ForegroundColor Gray
+                & winget install Microsoft.PowerShell --silent --accept-package-agreements --accept-source-agreements
+                Write-Host "[SUCCESS] PowerShell 7 installed via winget!" -ForegroundColor Green
+            } else {
+                # Use Microsoft's official installer script
+                Write-Host "[INFO] Using Microsoft's official installer..." -ForegroundColor Gray
+                iex "& { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI -Quiet"
+                Write-Host "[SUCCESS] PowerShell 7 installed via Microsoft installer!" -ForegroundColor Green
+            }
+            
+            Write-Host ""
+            Write-Host "[NEXT] Please restart this script in PowerShell 7 for the best experience:" -ForegroundColor Cyan
+            Write-Host "  1. Open Start Menu and search for 'PowerShell 7'" -ForegroundColor White
+            Write-Host "  2. Run this command again:" -ForegroundColor White
+            Write-Host "     iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex" -ForegroundColor Yellow
+            exit 0
+        } catch {
+            Write-Host "[WARNING] Automatic installation failed: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "[FALLBACK] You can install manually:" -ForegroundColor Yellow
+            Write-Host "  • Download from: https://github.com/PowerShell/PowerShell/releases" -ForegroundColor White
+            Write-Host "  • Or use: winget install Microsoft.PowerShell" -ForegroundColor White
+        }
+    }
+}
+
+Write-Host "[SUCCESS] PowerShell version check passed (v$($PSVersionTable.PSVersion))" -ForegroundColor Green
+Write-Host ""
+
 # Function to detect and install dependencies
 function Install-Dependencies {
     Write-Host "[INFO] Checking dependencies..." -ForegroundColor Yellow

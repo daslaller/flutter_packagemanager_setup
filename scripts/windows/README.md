@@ -4,12 +4,17 @@ Automated setup for Flutter development with **multi-select repository interface
 
 ## 🚀 Quick Start
 
-**Double-click to run:**
-```
-windows\setup-windows.bat
+**One-line remote execution (Recommended):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex
 ```
 
-That's it! The setup will guide you through everything with an intuitive interface.
+**Or run directly without installation:**
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/run.ps1 | iex
+```
+
+That's it! No downloads needed - the setup runs directly from GitHub and guides you through everything.
 
 ## ✨ Key Features
 
@@ -40,21 +45,29 @@ That's it! The setup will guide you through everything with an intuitive interfa
 ## 📁 Directory Structure
 
 ```
-setup_flutter_dev_env/
-├── README.md                           # This documentation
-├── private-packages.json               # Sample configuration file
-└── windows/
-    ├── setup-windows.bat              # One-click launcher
-    ├── setup-windows.ps1              # Enhanced PowerShell script
-    └── private-packages.json          # Windows-specific config
+flutter_packagemanager_setup/
+├── install/
+│   ├── install.ps1                     # Remote installer
+│   └── run.ps1                         # Direct run without install
+└── scripts/
+    └── windows/
+        ├── windows_full_standalone.ps1 # Main Windows script
+        └── private-packages.json       # Sample configuration
 ```
 
 ## 🎮 How to Use
 
-### 1. **Run the Setup**
-Double-click `windows\setup-windows.bat` or run:
+### 1. **Run the Remote Setup**
+Choose your preferred method:
+
+**Install and create global command:**
 ```powershell
-.\windows\setup-windows.bat
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex
+```
+
+**Run once without installing:**
+```powershell
+iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/run.ps1 | iex
 ```
 
 ### 2. **Follow the Interactive Interface**
