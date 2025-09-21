@@ -364,6 +364,11 @@ function Run-Immediately {
 function Main {
     Install-Dependencies
     Download-PackageManager
+    # Verify installation is up to date before creating global command
+    $verified = Verify-InstallationUpToDate -InstallDir $InstallDir -Branch $Branch
+    if (-not $verified) {
+        Write-Host "[WARNING] Verification reported issues. Proceeding, but installation may be stale." -ForegroundColor Yellow
+    }
     Create-GlobalCommand
     Run-Immediately
 }
