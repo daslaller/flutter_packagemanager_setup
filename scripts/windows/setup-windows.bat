@@ -22,10 +22,10 @@ REM Get the directory where this batch file is located
 set "SCRIPT_DIR=%~dp0"
 
 REM Check if the PowerShell script exists
-if not exist "%SCRIPT_DIR%setup-windows.ps1" (
-    echo [ERROR] setup-windows.ps1 not found!
+if not exist "%SCRIPT_DIR%windows_full_standalone.ps1" (
+    echo [ERROR] windows_full_standalone.ps1 not found!
     echo.
-    echo Expected location: %SCRIPT_DIR%setup-windows.ps1
+    echo Expected location: %SCRIPT_DIR%windows_full_standalone.ps1
     echo.
     echo Please ensure both files are in the same directory.
     echo.
@@ -72,7 +72,7 @@ echo.
 
 REM Launch PowerShell with bypass policy
 REM This allows the script to run without changing system-wide execution policy
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%setup-windows.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%windows_full_standalone.ps1"
 
 set "PS_EXIT_CODE=%ERRORLEVEL%"
 
@@ -96,6 +96,6 @@ if %PS_EXIT_CODE% equ 0 (
 )
 
 echo.
-echo [HELP] Need help? Check the setup-windows.ps1 file for details.
+echo [HELP] Need help? Check the windows_full_standalone.ps1 file for details.
 echo.
 pause
