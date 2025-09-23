@@ -70,9 +70,9 @@ Write-Host ""
 # Optional: Offer PowerShell 7 for better compatibility
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "[INFO] PowerShell 7 is recommended for best compatibility and features" -ForegroundColor Yellow
-    Write-Host "[PROMPT] Install PowerShell 7 now? (y/N)" -ForegroundColor Cyan
-    $ps7Choice = Read-Host "Install PowerShell 7 now? (y/N)"
-    if ($ps7Choice -match '^[Yy]') {
+    Write-Host "[PROMPT] Install PowerShell 7 now? (Y/n)" -ForegroundColor Cyan
+    $ps7Choice = Read-Host "Install PowerShell 7 now? (Y/n)"
+    if ($ps7Choice -notmatch '^[Nn]') {
         Write-Host "[INFO] Installing PowerShell 7..." -ForegroundColor Yellow
         try {
             if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -84,10 +84,44 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
                 iex "& { $(irm https://aka.ms/install-powershell.ps1) } -UseMSI -Quiet"
                 Write-Host "[SUCCESS] PowerShell 7 installed via Microsoft installer!" -ForegroundColor Green
             }
-            Write-Host "" 
-            Write-Host "[NEXT] Please restart this script in PowerShell 7:" -ForegroundColor Cyan
-            Write-Host "  iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex" -ForegroundColor Yellow
-            exit 0
+            
+            # Refresh PATH to include PowerShell 7
+            Write-Host "[INFO] Refreshing environment variables..." -ForegroundColor Gray
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            
+            # Try to locate PowerShell 7 executable
+            $pwsh7Path = $null
+            $commonPaths = @(
+                "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe",
+                "$env:LOCALAPPDATA\Microsoft\powershell\pwsh.exe"
+            )
+            
+            foreach ($path in $commonPaths) {
+                if (Test-Path $path) {
+                    $pwsh7Path = $path
+                    break
+                }
+            }
+            
+            if ($pwsh7Path) {
+                Write-Host "[SUCCESS] PowerShell 7 found at: $pwsh7Path" -ForegroundColor Green
+                Write-Host "[INFO] Restarting installer in PowerShell 7..." -ForegroundColor Cyan
+                
+                # Build the command to restart the installer in PowerShell 7
+                $restartCmd = "& '$pwsh7Path' -Command `"iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex`""
+                
+                Write-Host "[INFO] Executing: $restartCmd" -ForegroundColor Gray
+                Invoke-Expression $restartCmd
+                exit 0
+            } else {
+                Write-Host "[WARNING] PowerShell 7 installed but not found in expected locations" -ForegroundColor Yellow
+                Write-Host "[NEXT] Please restart this script manually in PowerShell 7:" -ForegroundColor Cyan
+                Write-Host "  1. Open Start Menu and search for 'PowerShell 7'" -ForegroundColor White
+                Write-Host "  2. Run this command:" -ForegroundColor White
+                Write-Host "     iwr -useb https://raw.githubusercontent.com/daslaller/flutter_packagemanager_setup/main/install/install.ps1 | iex" -ForegroundColor Yellow
+                exit 0
+            }
         } catch {
             Write-Host "[WARNING] Automatic PowerShell 7 installation failed: $($_.Exception.Message)" -ForegroundColor Yellow
             Write-Host "[INFO] You can continue with the current PowerShell version." -ForegroundColor Cyan
@@ -246,12 +280,19 @@ function Create-GlobalCommand {
     Write-Host ""
     Write-Host "[SETUP] Setting up global command..." -ForegroundColor Yellow
     
-    # Create batch wrapper
+    # Create batch wrapper that prefers PowerShell 7
     $wrapperBat = "$InstallDir\$ScriptName.bat"
     $wrapperContent = @"
 @echo off
 cd /d "$InstallDir"
-powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1" %*
+
+REM Try PowerShell 7 first (pwsh), then fall back to Windows PowerShell (powershell)
+where pwsh >nul 2>&1
+if %ERRORLEVEL% == 0 (
+    pwsh -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1" %*
+) else (
+    powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1" %*
+)
 "@
     
     $wrapperContent | Out-File -FilePath $wrapperBat -Encoding ASCII

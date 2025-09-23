@@ -80,9 +80,15 @@ function Run-PackageManager {
         Write-Host "🚀 Starting Flutter Package Manager..." -ForegroundColor Cyan
         Write-Host ""
         
-        # Run the Windows PowerShell script
+        # Run the Windows PowerShell script (prefer PowerShell 7 if available)
         Push-Location $TempDir
-        & powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1"
+        if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+            Write-Host "🚀 Using PowerShell 7..." -ForegroundColor Green
+            & pwsh -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1"
+        } else {
+            Write-Host "🚀 Using Windows PowerShell..." -ForegroundColor Yellow
+            & powershell -ExecutionPolicy Bypass -File "scripts\windows\windows_full_standalone.ps1"
+        }
         Pop-Location
         
     } catch {
