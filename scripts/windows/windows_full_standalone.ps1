@@ -441,7 +441,8 @@ function New-SSHKey {
 
 function Show-RepositorySelector {
     param(
-        [array]$Repositories
+        [array]$Repositories,
+        [switch]$SingleSelect
     )
     
     $selectedIndices = @()
@@ -469,7 +470,11 @@ function Show-RepositorySelector {
             Write-StatusMessage "[SEARCH] Search Mode - Type to filter, ESC to exit search" "Info"
             Write-StatusMessage "Filter: $searchFilter" "Emphasis"
         } else {
-            Write-StatusMessage "Navigation: Up/Down arrows | Page: PageUp/PageDown | Search: S | Select: SPACE | Confirm: ENTER | Quit: Q" "Subtle"
+            if ($SingleSelect) {
+                Write-StatusMessage "Navigation: Up/Down arrows | Page: PageUp/PageDown | Search: S | Select: SPACE | Quit: Q" "Subtle"
+            } else {
+                Write-StatusMessage "Navigation: Up/Down arrows | Page: PageUp/PageDown | Search: S | Select: SPACE | Confirm: ENTER | Quit: Q" "Subtle"
+            }
         }
         
         Write-Host ""
@@ -628,10 +633,17 @@ function Show-RepositorySelector {
             32 { # Space
                 if ($currentIndex -lt $filteredRepos.Count) {
                     $originalIndex = $indexMapping[$currentIndex]
-                    if ($selectedIndices -contains $originalIndex) {
-                        $selectedIndices = $selectedIndices | Where-Object { $_ -ne $originalIndex }
+                    if ($SingleSelect) {
+                        # Single-select mode: replace selection
+                        $selectedIndices = @($originalIndex)
+                        return $selectedIndices
                     } else {
-                        $selectedIndices += $originalIndex
+                        # Multi-select mode: toggle selection
+                        if ($selectedIndices -contains $originalIndex) {
+                            $selectedIndices = $selectedIndices | Where-Object { $_ -ne $originalIndex }
+                        } else {
+                            $selectedIndices += $originalIndex
+                        }
                     }
                 }
             }
@@ -873,6 +885,100 @@ function Start-InteractiveRepositorySelection {
     }
 }
 
+function Start-GitHubProjectCloning {
+    Write-StatusMessage "[INFO] Starting GitHub Flutter project selection..." "Info"
+    
+    Write-StatusMessage "[INFO] Fetching your repositories..." "Info"
+    try {
+        $repos = gh repo list --limit 100 --json name,owner,isPrivate,url,description | ConvertFrom-Json
+        
+        if ($repos.Count -eq 0) {
+            Write-StatusMessage "[ERROR] No repositories found" "Error"
+            return $null
+        }
+        
+        Write-StatusMessage "[SUCCESS] Found $($repos.Count) repositories" "Success"
+        
+        # Show single-select interface for project cloning
+        $selectedIndices = Show-RepositorySelector -Repositories $repos -SingleSelect
+        
+        if ($selectedIndices.Count -eq 0) {
+            Write-StatusMessage "[INFO] No repository selected" "Info"
+            return $null
+        }
+        
+        $selectedRepo = $repos[$selectedIndices[0]]
+        Write-StatusMessage "[INFO] Selected repository: $($selectedRepo.owner.login)/$($selectedRepo.name)" "Info"
+        
+        # Ask for clone destination
+        $defaultDir = Join-Path (Get-Location) $selectedRepo.name
+        Write-Host ""
+        $cloneDir = Read-Host "Enter directory to clone to (default: $defaultDir)"
+        if ([string]::IsNullOrEmpty($cloneDir)) {
+            $cloneDir = $defaultDir
+        }
+        
+        # Check if directory already exists
+        if (Test-Path $cloneDir) {
+            Write-StatusMessage "[ERROR] Directory already exists: $cloneDir" "Error"
+            $overwrite = Read-Host "Overwrite existing directory? (y/N)"
+            if ($overwrite -notmatch '^[Yy]') {
+                Write-StatusMessage "[INFO] Operation cancelled" "Info"
+                return $null
+            }
+            Remove-Item $cloneDir -Recurse -Force
+        }
+        
+        # Clone the repository
+        Write-StatusMessage "[INFO] Cloning repository..." "Info"
+        try {
+            $cloneUrl = $selectedRepo.url
+            if ($UseSSH -and $selectedRepo.owner.login -eq (gh api user --jq .login)) {
+                $cloneUrl = "git@github.com:$($selectedRepo.owner.login)/$($selectedRepo.name).git"
+            }
+            
+            $cloneResult = git clone $cloneUrl $cloneDir 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-StatusMessage "[ERROR] Clone failed: $cloneResult" "Error"
+                return $null
+            }
+            
+            Write-StatusMessage "[SUCCESS] Repository cloned successfully" "Success"
+            
+            # Check if it's a Flutter project
+            $pubspecPath = Join-Path $cloneDir "pubspec.yaml"
+            if (Test-Path $pubspecPath) {
+                if (Test-FlutterProject $pubspecPath) {
+                    Write-StatusMessage "[SUCCESS] Valid Flutter project detected" "Success"
+                    Write-StatusMessage "[INFO] Project location: $cloneDir" "Info"
+                    
+                    # Ask if user wants to navigate to the project
+                    $navigate = Read-Host "Navigate to the cloned project directory? (Y/n)"
+                    if ($navigate -notmatch '^[Nn]') {
+                        Set-Location $cloneDir
+                        Write-StatusMessage "[SUCCESS] Changed to project directory" "Success"
+                        Write-StatusMessage "[INFO] You can now run Flutter Package Manager again to manage this project" "Info"
+                    }
+                } else {
+                    Write-StatusMessage "[WARNING] Not a Flutter project. Clone completed but this is not a Flutter project." "Warning"
+                }
+            } else {
+                Write-StatusMessage "[WARNING] No pubspec.yaml found. This may not be a Flutter project." "Warning"
+            }
+            
+            return $cloneDir
+            
+        } catch {
+            Write-StatusMessage "[ERROR] Failed to clone repository: $($_.Exception.Message)" "Error"
+            return $null
+        }
+        
+    } catch {
+        Write-StatusMessage "[ERROR] Failed to fetch repositories: $($_.Exception.Message)" "Error"
+        return $null
+    }
+}
+
 function Find-FlutterProjects {
     $flutterProjects = @()
     $searchDirs = @(".", "..")
@@ -1103,17 +1209,59 @@ function Update-FlutterPackageManager {
         Write-StatusMessage "[INFO] Updating Flutter Package Manager..." "Info"
         Push-Location $repoRoot
         try {
-            git fetch origin main *>$null
-            $currentCommit = git rev-parse HEAD
-            $latestCommit = git rev-parse origin/main
+            # Check if we're in a clean state
+            $gitStatus = git status --porcelain 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-StatusMessage "[ERROR] Git status check failed: $gitStatus" "Error"
+                return
+            }
+            
+            if ($gitStatus) {
+                Write-StatusMessage "[INFO] Stashing local changes before update..." "Info"
+                $stashResult = git stash push -m "Auto-stash before update $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-StatusMessage "[ERROR] Failed to stash changes: $stashResult" "Error"
+                    return
+                }
+            }
+            
+            # Fetch latest changes
+            Write-StatusMessage "[INFO] Fetching latest changes..." "Info"
+            $fetchResult = git fetch origin main 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-StatusMessage "[ERROR] Fetch failed: $fetchResult" "Error"
+                return
+            }
+            
+            $currentCommit = git rev-parse HEAD 2>&1
+            $latestCommit = git rev-parse origin/main 2>&1
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-StatusMessage "[ERROR] Failed to get commit information" "Error"
+                return
+            }
             
             if ($currentCommit -eq $latestCommit) {
                 Write-StatusMessage "[SUCCESS] Flutter Package Manager is already up to date" "Success"
             } else {
                 Write-StatusMessage "[INFO] Updating to latest version..." "Info"
-                git pull origin main *>$null
+                $pullResult = git reset --hard origin/main 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-StatusMessage "[ERROR] Update failed: $pullResult" "Error"
+                    return
+                }
                 Write-StatusMessage "[SUCCESS] Flutter Package Manager updated successfully" "Success"
                 Write-StatusMessage "[INFO] Restart recommended to use the latest version" "Info"
+            }
+            
+            # Restore stashed changes if any
+            if ($gitStatus) {
+                Write-StatusMessage "[INFO] Restoring local changes..." "Info"
+                $popResult = git stash pop 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-StatusMessage "[WARNING] Could not restore local changes: $popResult" "Warning"
+                    Write-StatusMessage "[INFO] Check 'git stash list' if you need to recover them" "Info"
+                }
             }
         } catch {
             Write-StatusMessage "[ERROR] Update failed: $($_.Exception.Message)" "Error"
@@ -1212,20 +1360,21 @@ function Show-MainMenu {
     Write-Host ""
     Write-StatusMessage "[FLUTTER] Flutter Package Manager - Main Menu:" "Emphasis"
     Write-StatusMessage "1. New project setup (scan directories)" "Info"
-    Write-StatusMessage "2. Add packages from GitHub repositories" "Info"
+    Write-StatusMessage "2. Clone Flutter project from GitHub" "Info"
     Write-StatusMessage "3. Configuration settings" "Info"
     
     if ($hasLocalProject) {
         Write-StatusMessage "4. Use detected project: $projectName [DEFAULT]" "Success"
+        Write-StatusMessage "5. Add packages from GitHub repositories" "Info"
         if ($hasGitDeps) {
-            Write-StatusMessage "5. [EXPRESS] Express Git update for $projectName" "Success"
+            Write-StatusMessage "6. [EXPRESS] Express Git update for $projectName" "Success"
         }
-        Write-StatusMessage "6. [CACHE] Git cache management" "Info"
+        Write-StatusMessage "7. [CACHE] Git cache management" "Info"
     }
     
-    Write-StatusMessage "7. [UPDATE] Update Flutter Package Manager" "Info"
+    Write-StatusMessage "8. [UPDATE] Update Flutter Package Manager" "Info"
     
-    $maxChoice = if ($hasLocalProject -and $hasGitDeps) { 7 } elseif ($hasLocalProject) { 7 } else { 7 }
+    $maxChoice = if ($hasLocalProject -and $hasGitDeps) { 8 } elseif ($hasLocalProject) { 8 } else { 8 }
     $defaultChoice = if ($hasLocalProject) { "4" } else { "1" }
     
     Write-Host ""
@@ -1397,13 +1546,8 @@ function Main {
                 break
             }
             "2" {
-                Write-StatusMessage "[INFO] Starting GitHub repository selection..." "Info"
-                if ($menuResult.HasLocalProject) {
-                    Start-PackageSelection $menuResult.DetectedProject | Out-Null
-                } else {
-                    Write-StatusMessage "[WARNING] No local Flutter project detected" "Warning"
-                    Write-StatusMessage "[INFO] Please navigate to a Flutter project directory or create one first" "Info"
-                }
+                Write-StatusMessage "[INFO] Starting GitHub Flutter project cloning..." "Info"
+                Start-GitHubProjectCloning | Out-Null
                 break
             }
             "3" {
@@ -1421,8 +1565,9 @@ function Main {
                 }
             }
             "5" {
-                if ($menuResult.HasLocalProject -and $menuResult.HasGitDeps) {
-                    Start-ExpressGitUpdate $menuResult.DetectedProject
+                if ($menuResult.HasLocalProject) {
+                    Write-StatusMessage "[INFO] Starting GitHub package selection..." "Info"
+                    Start-InteractiveRepositorySelection | Out-Null
                     break
                 } else {
                     Write-StatusMessage "[ERROR] Invalid option: 5" "Error"
@@ -1430,10 +1575,8 @@ function Main {
                 }
             }
             "6" {
-                if ($menuResult.HasLocalProject) {
-                    Write-StatusMessage "[INFO] Starting Git cache management..." "Info"
-                    $projectDir = Split-Path $menuResult.DetectedProject -Parent
-                    Clear-GitCache -ProjectDir $projectDir
+                if ($menuResult.HasLocalProject -and $menuResult.HasGitDeps) {
+                    Start-ExpressGitUpdate $menuResult.DetectedProject
                     break
                 } else {
                     Write-StatusMessage "[ERROR] Invalid option: 6" "Error"
@@ -1441,6 +1584,17 @@ function Main {
                 }
             }
             "7" {
+                if ($menuResult.HasLocalProject) {
+                    Write-StatusMessage "[INFO] Starting Git cache management..." "Info"
+                    $projectDir = Split-Path $menuResult.DetectedProject -Parent
+                    Clear-GitCache -ProjectDir $projectDir
+                    break
+                } else {
+                    Write-StatusMessage "[ERROR] Invalid option: 7" "Error"
+                    continue
+                }
+            }
+            "8" {
                 Update-FlutterPackageManager
                 break
             }

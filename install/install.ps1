@@ -288,20 +288,31 @@ function Verify-InstallationUpToDate {
         if (Test-Path $gitDir) {
             Push-Location $InstallDir
             try {
-                git fetch origin $Branch --prune 1>$null 2>$null
-                $head = git rev-parse HEAD 2>$null
-                $remote = git rev-parse "origin/$Branch" 2>$null
+                $fetchResult = git fetch origin $Branch --prune 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "[WARNING] Fetch failed: $fetchResult" -ForegroundColor Yellow
+                }
+                
+                $head = git rev-parse HEAD 2>&1
+                $remote = git rev-parse "origin/$Branch" 2>&1
+                
                 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($remote)) {
                     Write-Host "[WARNING] Could not determine remote HEAD; attempting hard reset" -ForegroundColor Yellow
-                    git reset --hard "origin/$Branch" 1>$null 2>$null
-                    $head = git rev-parse HEAD 2>$null
-                    $remote = git rev-parse "origin/$Branch" 2>$null
+                    $resetResult = git reset --hard "origin/$Branch" 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "[ERROR] Hard reset failed: $resetResult" -ForegroundColor Red
+                    }
+                    $head = git rev-parse HEAD 2>&1
+                    $remote = git rev-parse "origin/$Branch" 2>&1
                 }
                 if ($head -ne $remote) {
                     Write-Host "[FIX] Local not on origin/$Branch. Resetting..." -ForegroundColor Yellow
-                    git reset --hard "origin/$Branch" 1>$null 2>$null
-                    $head = git rev-parse HEAD 2>$null
-                    $remote = git rev-parse "origin/$Branch" 2>$null
+                    $resetResult = git reset --hard "origin/$Branch" 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host "[ERROR] Hard reset failed: $resetResult" -ForegroundColor Red
+                    }
+                    $head = git rev-parse HEAD 2>&1
+                    $remote = git rev-parse "origin/$Branch" 2>&1
                 }
                 Write-Host ("[INFO] Local HEAD:  " + $head) -ForegroundColor Gray
                 Write-Host ("[INFO] Remote HEAD: " + $remote) -ForegroundColor Gray
@@ -330,8 +341,14 @@ function Verify-InstallationUpToDate {
                 if (Test-Path (Join-Path $InstallDir '.git')) {
                     Push-Location $InstallDir
                     try {
-                        git fetch origin $Branch --prune 1>$null 2>$null
-                        git reset --hard "origin/$Branch" 1>$null 2>$null
+                        $fetchResult = git fetch origin $Branch --prune 2>&1
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Host "[ERROR] Fetch failed during legacy fix: $fetchResult" -ForegroundColor Red
+                        }
+                        $resetResult = git reset --hard "origin/$Branch" 2>&1
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Host "[ERROR] Reset failed during legacy fix: $resetResult" -ForegroundColor Red
+                        }
                     } finally {
                         Pop-Location
                     }
